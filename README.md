@@ -118,6 +118,7 @@ curl http://127.0.0.1:3000/v1/messages \
 
 - The `model` value is a client-facing alias echoed in the response. The actual engine remains Yahoo Agent I; this does not connect to OpenAI or Anthropic models. GET /v1/models currently lists `agent-i`.
 - These routes are synchronous from the client's perspective: the HTTP request stays open while the durable job is processed. Large prompts still use chunking and summarization internally. For explicit asynchronous polling, continue using POST /v1/jobs.
+- `stream: true` emits protocol-compatible SSE frames, but Agent I still generates a complete job result first; the adapter then emits that result in chunks. It is not token-by-token streaming from Yahoo.
 - OpenAI sampling controls such as `temperature`, `top_p`, and `max_tokens`, and Anthropic's required `max_tokens`, are accepted for request compatibility but are not enforced by the Yahoo Agent I upstream.
 - Token usage fields are estimates based on UTF-8 size, not exact provider tokenizer counts or billing data.
 - Text-only content is supported. Image input, tool/function calling, and tool-result messages are rejected for now; tool support will be added separately.
