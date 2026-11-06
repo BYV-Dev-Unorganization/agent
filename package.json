@@ -1,0 +1,11 @@
+{
+  "name": "agent-i-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SQLite-backed asynchronous Agent I backend with 150k-character input support",
+  "engines": { "node": ">=20" },
+  "scripts": { "start": "node src/server.js", "dev": "node --watch src/server.js", "test": "node --test" },
+  "dependencies": { "better-sqlite3": "^11.10.0",
+    "dotenv": "^16.4.7" }
+}
