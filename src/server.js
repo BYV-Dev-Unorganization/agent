@@ -6,6 +6,7 @@ import { openDatabase } from "./db.js";
 import { countCodePoints, countUtf8Bytes, splitTextLossless } from "./chunking.js";
 import { AgentGateway } from "./agent-gateway.js";
 import { processJob, calculateProgress } from "./processor.js";
+import { handleCompatRequest } from "./compat-http.js";
 
 const MAX_INPUT_CHARS = 150000;
 const MAX_INPUT_BYTES = 600000;
@@ -201,6 +202,17 @@ export function createBackendServer(options = {}) {
           queue: { queued: counts.queued ?? 0, running: counts.running ?? 0 }
         });
       }
+
+      const compatHandled = await handleCompatRequest(req, res, {
+        db,
+        apiToken,
+        readJson,
+        normalize,
+        insertJob,
+        readJob,
+        sendJson
+      });
+      if (compatHandled) return;
 
       if (!isAuthorized(req, apiToken)) return sendJson(res, 401, { error: "UNAUTHORIZED", message: "A valid Bearer token is required" });
 
