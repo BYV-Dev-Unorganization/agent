@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
   normalizeOpenAIRequest,
   normalizeAnthropicRequest,
@@ -18,33 +18,7 @@ function isAuthorized(req, token, protocol) {
   const suppliedBytes = Buffer.from(supplied);
   return expectedBytes.length === suppliedBytes.length &&
     expectedBytes.length > 0 &&
-    timingSafeEqualSafe(expectedBytes, suppliedBytes);
-}
-
-function timingSafeEqualSafe(a, b) {
-  // Both buffers have already been checked for equal, non-zero length.
-  return globalThis.crypto?.subtle
-    ? safeTimingCompare(a, b)
-    : a.equals(b);
-}
-
-function safeTimingCompare(a, b) {
-  // Use Node's constant-time primitive when available.
-  try {
-    const { timingSafeEqual } = requireCrypto();
-    return timingSafeEqual(a, b);
-  } catch {
-    return a.equals(b);
-  }
-}
-
-function requireCrypto() {
-  // Kept behind a helper so this module stays usable in Node ESM.
-  return { timingSafeEqual: (a, b) => {
-    let difference = 0;
-    for (let i = 0; i < a.length; i += 1) difference |= a[i] ^ b[i];
-    return difference === 0;
-  } };
+    timingSafeEqual(expectedBytes, suppliedBytes);
 }
 
 function sendProtocolError(res, protocol, status, message, sendJson) {
@@ -111,120 +85,6 @@ function splitForStream(text, size = 900) {
   return chunks;
 }
 
-async function waitForJob(db, jobId, onPending = null) {
-  let lastPing = Date.now();
-  while (true) {
-    const job = db.readJob(jobId);
-    if (!job) {
-      const error = new Error("Job disappeared before it completed");
-      error.status = 500;
-      throw error;
-    }
-    if (job.status === "completed") return job;
-    if (job.status === "failed") {
-      const error = new Error(job.error || "Agent I job failed");
-      error.status = 502;
-      throw error;
-    }
-    if (onPending && Date.now() - lastPing >= 10000) {
-      if (onPending() === false) return null;
-      lastPing = Date.now();
-    }
-    if (onPending && onPending.isClosed?.()) return null;
-    await sleep(200);
-  }
-}
-
-async function sendOpenAIStream(res, jobPromise, request, promptTokens) {
-  const id = "chatcmpl-" + randomUUID().replaceAll("-", "");
-  const created = Math.floor(Date.now() / 1000);
-  const headers = {
-    "content-type": "text/event-stream; charset=utf-8",
-    "cache-control": "no-cache, no-transform",
-    connection: "keep-alive",
-    "x-accel-buffering": "no"
-  };
-  res.writeHead(200, headers);
-  res.flushHeaders?.();
-  openAIChunk(res, id, created, request.model, { role: "assistant" });
-
-  let job;
-  try {
-    job = await jobPromise(() => {
-      if (res.destroyed || res.writableEnded) return false;
-      res.write(": keep-alive\n\n");
-      return true;
-    }, () => res.destroyed || res.writableEnded);
-  } catch (error) {
-    if (!res.destroyed && !res.writableEnded) openAIErrorEvent(res, error.message);
-    return;
-  }
-  if (!job || res.destroyed || res.writableEnded) return;
-
-  for (const chunk of splitForStream(job.result)) {
-    openAIChunk(res, id, created, request.model, { content: chunk });
-  }
-  openAIChunk(res, id, created, request.model, {}, "stop");
-  res.write("data: [DONE]\n\n");
-  res.end();
-}
-
-async function sendAnthropicStream(res, jobPromise, request, promptTokens) {
-  const id = "msg_" + randomUUID().replaceAll("-", "");
-  const message = {
-    id,
-    type: "message",
-    role: "assistant",
-    model: request.model,
-    content: [],
-    stop_reason: null,
-    stop_sequence: null,
-    usage: { input_tokens: promptTokens, output_tokens: 0 }
-  };
-  res.writeHead(200, {
-    "content-type": "text/event-stream; charset=utf-8",
-    "cache-control": "no-cache, no-transform",
-    connection: "keep-alive",
-    "x-accel-buffering": "no"
-  });
-  res.flushHeaders?.();
-  anthropicEvent(res, "message_start", { type: "message_start", message });
-  anthropicEvent(res, "content_block_start", {
-    type: "content_block_start",
-    index: 0,
-    content_block: { type: "text", text: "" }
-  });
-
-  let job;
-  try {
-    job = await jobPromise(() => {
-      if (res.destroyed || res.writableEnded) return false;
-      res.write(": keep-alive\n\n");
-      return true;
-    }, () => res.destroyed || res.writableEnded);
-  } catch (error) {
-    if (!res.destroyed && !res.writableEnded) anthropicErrorEvent(res, error.message);
-    return;
-  }
-  if (!job || res.destroyed || res.writableEnded) return;
-
-  for (const chunk of splitForStream(job.result)) {
-    anthropicEvent(res, "content_block_delta", {
-      type: "content_block_delta",
-      index: 0,
-      delta: { type: "text_delta", text: chunk }
-    });
-  }
-  anthropicEvent(res, "content_block_stop", { type: "content_block_stop", index: 0 });
-  anthropicEvent(res, "message_delta", {
-    type: "message_delta",
-    delta: { stop_reason: "end_turn", stop_sequence: null },
-    usage: { output_tokens: estimateTokens(job.result) }
-  });
-  anthropicEvent(res, "message_stop", { type: "message_stop" });
-  res.end();
-}
-
 function buildOpenAIResponse(job, request, promptTokens) {
   const completionTokens = estimateTokens(job.result);
   return {
@@ -261,6 +121,119 @@ function buildAnthropicResponse(job, request, promptTokens) {
   };
 }
 
+async function waitForJob(readJob, jobId, onPending, isClosed) {
+  let lastPing = Date.now();
+  while (true) {
+    if (isClosed?.()) return null;
+    const job = readJob(jobId);
+    if (!job) {
+      const error = new Error("Job disappeared before it completed");
+      error.status = 500;
+      throw error;
+    }
+    if (job.status === "completed") return job;
+    if (job.status === "failed") {
+      const error = new Error(job.error || "Agent I job failed");
+      error.status = 502;
+      throw error;
+    }
+    if (onPending && Date.now() - lastPing >= 10000) {
+      if (onPending() === false) return null;
+      lastPing = Date.now();
+    }
+    await sleep(200);
+  }
+}
+
+async function sendOpenAIStream(res, getJob, request) {
+  const id = "chatcmpl-" + randomUUID().replaceAll("-", "");
+  const created = Math.floor(Date.now() / 1000);
+  res.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no"
+  });
+  res.flushHeaders?.();
+  openAIChunk(res, id, created, request.model, { role: "assistant" });
+
+  let job;
+  try {
+    job = await getJob(() => {
+      if (res.destroyed || res.writableEnded) return false;
+      res.write(": keep-alive\n\n");
+      return true;
+    }, () => res.destroyed || res.writableEnded);
+  } catch (error) {
+    if (!res.destroyed && !res.writableEnded) openAIErrorEvent(res, error.message);
+    return;
+  }
+  if (!job || res.destroyed || res.writableEnded) return;
+
+  for (const chunk of splitForStream(job.result)) {
+    openAIChunk(res, id, created, request.model, { content: chunk });
+  }
+  openAIChunk(res, id, created, request.model, {}, "stop");
+  res.write("data: [DONE]\n\n");
+  res.end();
+}
+
+async function sendAnthropicStream(res, getJob, request, promptTokens) {
+  const id = "msg_" + randomUUID().replaceAll("-", "");
+  const message = {
+    id,
+    type: "message",
+    role: "assistant",
+    model: request.model,
+    content: [],
+    stop_reason: null,
+    stop_sequence: null,
+    usage: { input_tokens: promptTokens, output_tokens: 0 }
+  };
+  res.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no"
+  });
+  res.flushHeaders?.();
+  anthropicEvent(res, "message_start", { type: "message_start", message });
+  anthropicEvent(res, "content_block_start", {
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "text", text: "" }
+  });
+
+  let job;
+  try {
+    job = await getJob(() => {
+      if (res.destroyed || res.writableEnded) return false;
+      res.write(": keep-alive\n\n");
+      return true;
+    }, () => res.destroyed || res.writableEnded);
+  } catch (error) {
+    if (!res.destroyed && !res.writableEnded) anthropicErrorEvent(res, error.message);
+    return;
+  }
+  if (!job || res.destroyed || res.writableEnded) return;
+
+  for (const chunk of splitForStream(job.result)) {
+    anthropicEvent(res, "content_block_delta", {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text: chunk }
+    });
+  }
+  anthropicEvent(res, "content_block_stop", { type: "content_block_stop", index: 0 });
+  anthropicEvent(res, "message_delta", {
+    type: "message_delta",
+    delta: { stop_reason: "end_turn", stop_sequence: null },
+    usage: { output_tokens: estimateTokens(job.result) }
+  });
+  anthropicEvent(res, "message_stop", { type: "message_stop" });
+  res.end();
+}
+
 /**
  * Handles the synchronous OpenAI Chat Completions and Anthropic Messages
  * compatibility routes by submitting work to the existing durable job queue.
@@ -270,7 +243,7 @@ export async function handleCompatRequest(req, res, context) {
   const isModels = req.method === "GET" && url.pathname === "/v1/models";
   const protocol = req.method === "POST" && url.pathname === "/v1/messages"
     ? "anthropic"
-    : req.method === "POST" && url.pathname === "/v1/chat/completions" || isModels
+    : ((req.method === "POST" && url.pathname === "/v1/chat/completions") || isModels)
       ? "openai"
       : null;
 
@@ -305,47 +278,24 @@ export async function handleCompatRequest(req, res, context) {
     res.setTimeout?.(0);
 
     const promptTokens = estimateTokens(request.promptForUsage);
-    const jobPromise = async (onPending, isClosed) =>
-      waitForJob({
-        readJob: (id) => context.readJob(context.db, id)
-      }, created.jobId, onPending, isClosed);
-
-    // waitForJob works against the same readJob contract used by the legacy API.
-    const wait = async (onPending, isClosed) => {
-      let lastPing = Date.now();
-      while (true) {
-        if (isClosed?.()) return null;
-        const job = context.readJob(context.db, created.jobId);
-        if (!job) {
-          const error = new Error("Job disappeared before it completed");
-          error.status = 500;
-          throw error;
-        }
-        if (job.status === "completed") return job;
-        if (job.status === "failed") {
-          const error = new Error(job.error || "Agent I job failed");
-          error.status = 502;
-          throw error;
-        }
-        if (onPending && Date.now() - lastPing >= 10000) {
-          if (onPending() === false) return null;
-          lastPing = Date.now();
-        }
-        await sleep(200);
-      }
-    };
+    const getJob = (onPending, isClosed) =>
+      waitForJob(
+        (id) => context.readJob(context.db, id),
+        created.jobId,
+        onPending,
+        isClosed
+      );
 
     if (request.stream) {
-      const streamJob = (onPending, isClosed) => wait(onPending, isClosed);
       if (protocol === "openai") {
-        await sendOpenAIStream(res, streamJob, request, promptTokens);
+        await sendOpenAIStream(res, getJob, request);
       } else {
-        await sendAnthropicStream(res, streamJob, request, promptTokens);
+        await sendAnthropicStream(res, getJob, request, promptTokens);
       }
       return true;
     }
 
-    const job = await wait();
+    const job = await getJob();
     if (!job || res.destroyed || res.writableEnded) return true;
     const response = protocol === "openai"
       ? buildOpenAIResponse(job, request, promptTokens)
