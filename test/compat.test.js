@@ -244,7 +244,7 @@ test("OpenAI accepts tool-result messages and continues the conversation", async
   assert.equal(final.choices[0].finish_reason, "stop");
   assert.equal(final.choices[0].message.content, "OpenAI record 42 details confirmed.");
   assert.match(lastGatewayPrompt, /=== LATEST TOOL RESULTS ===/);
-  assert.match(lastGatewayPrompt, /Record 42 was found\\./);
+  assert.ok(lastGatewayPrompt.includes("Record 42 was found."));
   assert.match(lastGatewayPrompt, /=== ORIGINAL USER REQUEST ===/);
 });
 
