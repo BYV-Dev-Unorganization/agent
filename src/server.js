@@ -51,7 +51,7 @@ async function readJson(req) {
   }
 }
 
-function normalize(body) {
+function normalize(body, options = {}) {
   const input = typeof body.input === "string" ? body.input : body.message;
   if (typeof input !== "string" || !input.trim()) throw new HttpError(400, "A non-empty input or message string is required");
   const chars = countCodePoints(input);
@@ -63,8 +63,12 @@ function normalize(body) {
     ? "Analyze the supplied source text and answer accurately."
     : "Understand and respond helpfully to the user's message.");
   if (typeof instruction !== "string" || !instruction.trim()) throw new HttpError(400, "instruction must be a non-empty string");
-  if (countCodePoints(instruction) > MAX_INSTRUCTION_CHARS || countUtf8Bytes(instruction) > MAX_INSTRUCTION_BYTES) {
-    throw new HttpError(413, "Instruction exceeds 2,000 characters or 6,000 UTF-8 bytes");
+  const instructionCharsLimit = options.toolCalling ? 12000 : MAX_INSTRUCTION_CHARS;
+  const instructionBytesLimit = options.toolCalling ? 48000 : MAX_INSTRUCTION_BYTES;
+  if (countCodePoints(instruction) > instructionCharsLimit || countUtf8Bytes(instruction) > instructionBytesLimit) {
+    throw new HttpError(413, options.toolCalling
+      ? "Tool definitions and instructions exceed the 12,000-character or 48,000-byte limit"
+      : "Instruction exceeds 2,000 characters or 6,000 UTF-8 bytes");
   }
 
   const requestedMode = body.mode ?? "auto";
@@ -72,10 +76,13 @@ function normalize(body) {
     throw new HttpError(400, "mode must be auto, direct, analyze, or transform");
   }
   const combined = bytes + countUtf8Bytes(instruction);
+  const directBudget = options.toolCalling ? 30000 : DIRECT_BUDGET_BYTES;
   let mode = requestedMode;
   if (mode === "auto") mode = combined <= DIRECT_BUDGET_BYTES ? "direct" : "analyze";
-  if (mode === "direct" && combined > DIRECT_BUDGET_BYTES) {
-    throw new HttpError(413, "Direct mode is limited to 7,000 combined UTF-8 bytes; use analyze or transform");
+  if (mode === "direct" && combined > directBudget) {
+    throw new HttpError(413, options.toolCalling
+      ? "Tool-calling requests are limited to 30,000 combined UTF-8 bytes"
+      : "Direct mode is limited to 7,000 combined UTF-8 bytes; use analyze or transform");
   }
   return { input, instruction, mode, chars, bytes, conversationId: body.conversationId };
 }
@@ -207,7 +214,7 @@ export function createBackendServer(options = {}) {
         db,
         apiToken,
         readJson,
-        normalize,
+        normalize: (body, normalizeOptions) => normalize(body, normalizeOptions),
         insertJob,
         readJob,
         sendJson
