@@ -54,7 +54,7 @@ test("Yahoo chat requests send an English Accept-Language header", async () => {
     fetch: async (url, init) => {
       capturedUrl = url;
       capturedInit = init;
-      return new Response('data: {"text":"Hello"}\\n\\n', {
+      return new Response('data: {"text":"Hello"}\n\n', {
         status: 200,
         headers: { "content-type": "text/event-stream" }
       });
