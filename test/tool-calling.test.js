@@ -163,12 +163,12 @@ test("builds a DeepSeek-style tool prompt with tools before the latest user mess
   assert.ok(prompt.indexOf("### SYSTEM") < prompt.indexOf("### CONVERSATION HISTORY"));
   assert.ok(prompt.indexOf("### CONVERSATION HISTORY") < prompt.indexOf("### TOOLS"));
   assert.ok(prompt.indexOf("### TOOLS") < prompt.indexOf("### LATEST USER MESSAGE"));
-  assert.match(prompt, /lookup_record\\(id\\*: integer; include_history: boolean\\)/);
+  assert.ok(prompt.includes("lookup_record(id*: integer; include_history: boolean)"));
   assert.ok(prompt.startsWith('[REQUIRED: Call the tool "lookup_record" NOW.'));
 
   assert.match(prompt, /<｜DSML｜ calls>/);
   assert.match(prompt, /<｜DSML｜ invoke name="TOOL_NAME">/);
-  assert.match(prompt, /Look up record 42\\./);
+  assert.ok(prompt.includes("Look up record 42."));
   assert.doesNotMatch(prompt, /SOURCE TEXT:/);
 });
 
@@ -185,6 +185,6 @@ test("builds a tool-result continuation prompt with original task context", () =
 
   assert.match(prompt, /=== LATEST TOOL RESULTS ===/);
   assert.match(prompt, /=== ORIGINAL USER REQUEST ===/);
-  assert.match(prompt, /Record 42 was found\\./);
+  assert.ok(prompt.includes("Record 42 was found."));
   assert.match(prompt, /If the task is complete, provide the final answer/);
 });
