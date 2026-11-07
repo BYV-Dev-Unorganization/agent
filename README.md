@@ -152,11 +152,11 @@ Anthropic Messages uses the same flow with `tools` entries containing `name`, `d
 - Token usage fields are estimates based on UTF-8 size, not exact provider tokenizer counts or billing data.
 - Text content and tool calling are supported. Image input remains unsupported.
 - OpenAI tools use `tools: [{ type: "function", function: { name, description, parameters } }]`; Anthropic tools use `tools: [{ name, description, input_schema }]`.
-- Tool definitions and arguments are translated through a prompt-based DSML protocol. This is not native Yahoo tool calling, and the upstream model may fail to emit valid DSML on some prompts.
+- Tool definitions and arguments are translated through a prompt-based DSML protocol. Tool requests use a structured prompt layout (system instructions, conversation history, tool definitions and rules, then the latest user message or tool results) and are sent directly to Yahoo Agent I without the generic long-document source-text wrapper. This is not native Yahoo tool calling, and the upstream model may still fail to emit valid DSML.
 - DSML calls are parsed and checked against the declared tool names and supported JSON Schema constraints before being returned. Invalid calls receive up to two formatting/validation recovery attempts.
 - Multiple tool calls in one response are supported. The backend returns the tool request only; the API client must execute it and send the result in the next request. The backend does not execute client tools.
 - OpenAI continuation uses assistant `tool_calls` followed by `role: "tool"` messages. Anthropic continuation uses assistant `tool_use` blocks followed by user `tool_result` blocks.
-- Tool-call requests run in direct mode and are limited to 30,000 combined UTF-8 bytes for the instruction, tool schemas, and conversation. Long-document analyze/transform modes are not supported together with tool calls.
+- Tool-call requests run in direct mode and are limited to 30,000 UTF-8 bytes for the complete structured prompt, including instructions, tool schemas, and conversation. Long-document analyze/transform modes are not supported together with tool calls.
 - Tool-call recovery detects the same set of calls repeated across three consecutive assistant turns and asks the model to stop calling tools.
 - JSON Schema validation covers common constraints including types, required/properties, additionalProperties, enum/const, combinators, local references, string and numeric limits, arrays, and pattern constraints. It is not a complete JSON Schema implementation; external references and format-specific validation are not performed.
 - The backend does not add internal Web Search, Web Fetch, shell, or filesystem executors.
