@@ -329,12 +329,12 @@ function resolveLocalReference(root, reference) {
   }
   let current = root;
   for (const part of parts) {
-    if (!current || typeof current !== "object" || !Object.prototype.hasOwnProperty.call(current, part)) {
+    if (current === null || typeof current !== "object" || !Object.prototype.hasOwnProperty.call(current, part)) {
       return null;
     }
     current = current[part];
   }
-  return current;
+  return current === null || current === undefined ? null : current;
 }
 
 function validateAgainstSchema(value, schema, path, rootSchema, depth = 0) {
@@ -404,6 +404,7 @@ function validateAgainstSchema(value, schema, path, rootSchema, depth = 0) {
       }
       let matchedPattern = false;
       for (const [pattern, childSchema] of Object.entries(patternProperties)) {
+        if (pattern.length > 256) return path + " has a patternProperties expression longer than 256 characters.";
         let matcher;
         try { matcher = new RegExp(pattern); } catch { return path + " has an invalid patternProperties expression."; }
         if (matcher.test(key)) {
@@ -462,6 +463,7 @@ function validateAgainstSchema(value, schema, path, rootSchema, depth = 0) {
       return path + " must be at most " + schema.maxLength + " character(s).";
     }
     if (typeof schema.pattern === "string") {
+      if (schema.pattern.length > 256) return path + " has a pattern constraint longer than 256 characters.";
       let matcher;
       try { matcher = new RegExp(schema.pattern); } catch { return path + " has an invalid pattern constraint."; }
       if (!matcher.test(value)) return path + " does not match the required pattern.";
