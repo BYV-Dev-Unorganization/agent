@@ -213,6 +213,7 @@ export function buildToolCallingPrompt({
 
   const latest = messages[messages.length - 1] || { role: "user", content: "" };
   const history = messages.slice(0, -1);
+  const choiceMode = forceTextOnly ? "none" : (toolChoice?.mode || "auto");
   if (history.length) {
     parts.push("### CONVERSATION HISTORY\n" +
       history.map(renderToolPromptMessage).join("\n\n"));
@@ -247,18 +248,6 @@ export function buildToolCallingPrompt({
       "</｜DSML｜ invoke>",
       "</｜DSML｜ calls>"
     ];
-
-    const choiceMode = forceTextOnly ? "none" : (toolChoice?.mode || "auto");
-    if (choiceMode === "none") {
-      lines.push("", "=== STOP: DO NOT CALL TOOLS ===",
-        "All tool calls are disabled for this turn. Do not emit DSML or any tool-call markup. Answer in plain text using only the available conversation and tool results.");
-    } else if (choiceMode === "required" || choiceMode === "any") {
-      lines.push("", "TOOL CHOICE: at least one tool call is REQUIRED for this turn. Do not answer in plain text instead of calling a tool.");
-    } else if (choiceMode === "tool") {
-      lines.push("", "TOOL CHOICE: call the tool named \"" + toolChoice.name + "\" now. Do not call a different tool.");
-    } else {
-      lines.push("", "TOOL CHOICE: auto. Call a tool whenever it is needed to complete the user's request; otherwise answer normally.");
-    }
 
     parts.push("### TOOLS\n" + lines.join("\n"));
   }
@@ -302,7 +291,28 @@ export function buildToolCallingPrompt({
     ].join("\n"));
   }
 
-  return parts.join("\n\n");
+  const prompt = parts.join("\n\n");
+  if (forceTextOnly || choiceMode === "none") {
+    return [
+      "=== STOP: DO NOT CALL TOOLS ===",
+      "Using all information already available in the conversation, answer the user now in plain text.",
+      "Do not emit DSML calls/invoke/parameter tags, legacy <TOOL_CALL> tags, or tool-call JSON.",
+      prompt
+    ].join("\n\n");
+  }
+  if (choiceMode === "required" || choiceMode === "any") {
+    return [
+      "[REQUIRED: Call at least one tool from the declared list NOW. Do not answer in plain text instead of calling a tool.]",
+      prompt
+    ].join("\n\n");
+  }
+  if (choiceMode === "tool") {
+    return [
+      "[REQUIRED: Call the tool \"" + toolChoice.name + "\" NOW. Respond only with one DSML calls block containing an invoke for that exact tool.]",
+      prompt
+    ].join("\n\n");
+  }
+  return prompt;
 }
 
 function readAttribute(attributes, name) {
