@@ -180,6 +180,42 @@ test("OpenAI tools return validated tool_calls without executing them on the bac
   assert.equal(savedJob.prompt_format, "raw");
 });
 
+test("OpenAI tool prompts over the legacy 7 KB budget still use direct mode", async () => {
+  const response = await fetch(baseUrl + "/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer compat-test-token",
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "agent-i",
+      messages: [{ role: "user", content: "Look up record 42." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "fixture_lookup",
+          description: "x".repeat(8000),
+          parameters: {
+            type: "object",
+            properties: { id: { type: "integer" } },
+            required: ["id"],
+            additionalProperties: false
+          }
+        }
+      }]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.choices[0].finish_reason, "tool_calls");
+  const job = db.prepare("SELECT mode, prompt_format FROM jobs WHERE id=?")
+    .get(response.headers.get("x-agent-i-job-id"));
+  assert.equal(job.mode, "direct");
+  assert.equal(job.prompt_format, "raw");
+  assert.ok(lastGatewayPrompt.length > 7000);
+});
+
 test("OpenAI accepts tool-result messages and continues the conversation", async () => {
   const tool = {
     type: "function",
