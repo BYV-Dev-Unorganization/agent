@@ -344,7 +344,7 @@ test("Anthropic tools return tool_use blocks and accept tool_result messages", a
   assert.equal(resumedData.stop_reason, "end_turn");
   assert.deepEqual(resumedData.content, [{ type: "text", text: "Record 42 details confirmed." }]);
   assert.match(lastGatewayPrompt, /=== LATEST TOOL RESULTS ===/);
-  assert.match(lastGatewayPrompt, /Record 42 was found\\./);
+  assert.ok(lastGatewayPrompt.includes("Record 42 was found."));
   assert.match(lastGatewayPrompt, /=== ORIGINAL USER REQUEST ===/);
 });
 
