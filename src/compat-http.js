@@ -7,7 +7,8 @@ import {
 import {
   parseDsmlToolCalls,
   validateToolCalls,
-  hasRepeatedToolCallLoop
+  hasRepeatedToolCallLoop,
+  buildToolCallingPrompt
 } from "./tool-calling.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -189,20 +190,11 @@ async function waitForJob(readJob, jobId, onPending, isClosed) {
 }
 
 function toolRecoveryInstruction(request, reason, forceTextOnly) {
-  const recovery = forceTextOnly
-    ? [
-        "TOOL LOOP RECOVERY:",
-        "A repeated identical tool call was detected. Do not call any tool again in this turn.",
-        "Do not emit DSML markup. Give the best possible plain-text answer using the conversation and tool results already available."
-      ]
-    : [
-        "TOOL CALL FORMAT RECOVERY:",
-        "Your previous response did not contain a valid DSML tool call.",
-        "Fix the issue described below. Emit exactly one valid DSML calls block when a tool is required.",
-        "Use only declared tool names and schema-valid arguments. Do not add explanatory text outside the calls block.",
-        "Validation error: " + reason
-      ];
-  return request.instruction + "\n\n" + recovery.join("\n");
+  return buildToolCallingPrompt({
+    ...request.toolPromptData,
+    recoveryReason: reason,
+    forceTextOnly
+  });
 }
 
 async function resolveToolOutcome(initialJob, initialPayload, request, protocol, context, onPending, isClosed) {
@@ -439,9 +431,12 @@ export async function handleCompatRequest(req, res, context) {
       : normalizeAnthropicRequest(body);
     const payload = context.normalize({
       input: request.input,
-      instruction: request.instruction,
+      instruction: request.hasTools ? request.toolPrompt : request.instruction,
       mode: request.mode
-    }, { toolCalling: request.hasTools });
+    }, {
+      toolCalling: request.hasTools,
+      promptFormat: request.hasTools ? "raw" : "standard"
+    });
     const created = context.insertJob(context.db, payload);
     res.setHeader("x-agent-i-job-id", created.jobId);
     res.setHeader("x-agent-i-conversation-id", created.conversationId);
