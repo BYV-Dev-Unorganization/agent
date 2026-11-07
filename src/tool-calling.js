@@ -272,7 +272,9 @@ function parseInvokeBlocks(raw) {
 
 export function parseDsmlToolCalls(value) {
   const source = typeof value === "string" ? value : "";
-  const sawToolMarkup = /<\s*\/?\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*(?:tool_calls|calls|invoke|parameter)\b/i.test(source);
+  const sawDsmlMarkup = /<\s*\/?\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*(?:tool_calls|calls|invoke|parameter)\b/i.test(source);
+  const sawLegacyMarkup = /<\s*TOOL_CALL\s*>/i.test(source);
+  const sawToolMarkup = sawDsmlMarkup || sawLegacyMarkup;
   const calls = [];
   const errors = [];
   let completeBlocks = 0;
@@ -285,7 +287,10 @@ export function parseDsmlToolCalls(value) {
     return "";
   });
 
-  if (sawToolMarkup && completeBlocks === 0) {
+  if (sawLegacyMarkup) {
+    errors.push("Legacy <TOOL_CALL> markup is unsupported; use DSML calls/invoke/parameter tags.");
+  }
+  if (sawDsmlMarkup && completeBlocks === 0) {
     errors.push("DSML markup was present but no complete calls block could be parsed.");
   }
   if (completeBlocks > 0 && /<\s*\/?\s*[｜|]{1,2}\s*DSML\s*[｜|]{1,2}\s*(?:tool_calls|calls|invoke|parameter)\b/i.test(text)) {
@@ -314,9 +319,14 @@ function matchesType(value, type) {
 
 function resolveLocalReference(root, reference) {
   if (typeof reference !== "string" || !reference.startsWith("#/")) return null;
-  const parts = reference.slice(2).split("/").map((part) =>
-    decodeURIComponent(part.replace(/~1/g, "/").replace(/~0/g, "~"))
-  );
+  let parts;
+  try {
+    parts = reference.slice(2).split("/").map((part) =>
+      decodeURIComponent(part.replace(/~1/g, "/").replace(/~0/g, "~"))
+    );
+  } catch {
+    return null;
+  }
   let current = root;
   for (const part of parts) {
     if (!current || typeof current !== "object" || !Object.prototype.hasOwnProperty.call(current, part)) {
@@ -328,6 +338,8 @@ function resolveLocalReference(root, reference) {
 }
 
 function validateAgainstSchema(value, schema, path, rootSchema, depth = 0) {
+  if (schema === true) return null;
+  if (schema === false) return path + " is not allowed by its schema.";
   if (!isPlainObject(schema)) return path + " has an invalid schema.";
   if (depth > 32) return path + " exceeds the maximum schema reference depth.";
 
