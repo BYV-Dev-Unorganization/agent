@@ -85,7 +85,7 @@ function normalize(body, options = {}) {
     : bytes + countUtf8Bytes(instruction);
   const directBudget = options.toolCalling ? 30000 : DIRECT_BUDGET_BYTES;
   let mode = requestedMode;
-  if (mode === "auto") mode = combined <= DIRECT_BUDGET_BYTES ? "direct" : "analyze";
+  if (mode === "auto") mode = combined <= directBudget ? "direct" : "analyze";
   if (mode === "direct" && combined > directBudget) {
     throw new HttpError(413, options.toolCalling
       ? "Tool-calling prompts are limited to 30,000 UTF-8 bytes"
