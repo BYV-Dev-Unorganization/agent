@@ -114,6 +114,35 @@ curl http://127.0.0.1:3000/v1/messages \
   }'
 ~~~
 
+### Tool calling examples
+
+OpenAI Chat Completions request:
+
+~~~json
+{
+  "model": "agent-i",
+  "messages": [{ "role": "user", "content": "Look up record 42." }],
+  "tools": [{
+    "type": "function",
+    "function": {
+      "name": "lookup_record",
+      "description": "Look up a record by its numeric ID.",
+      "parameters": {
+        "type": "object",
+        "properties": { "id": { "type": "integer" } },
+        "required": ["id"],
+        "additionalProperties": false
+      }
+    }
+  }],
+  "tool_choice": "auto"
+}
+~~~
+
+When a tool is needed, the response contains an assistant message with `tool_calls` and `finish_reason: "tool_calls"`. Execute the call in the client, then append the assistant message and a `role: "tool"` result message (with the matching `tool_call_id`) to the next request.
+
+Anthropic Messages uses the same flow with `tools` entries containing `name`, `description`, and `input_schema`. The assistant response contains a `tool_use` content block and `stop_reason: "tool_use"`. After executing the tool, send a `tool_result` block in a user message using the returned `tool_use_id`.
+
 ### Compatibility notes
 
 - The `model` value is a client-facing alias echoed in the response. The actual engine remains Yahoo Agent I; this does not connect to OpenAI or Anthropic models. GET /v1/models currently lists `agent-i`.
@@ -121,7 +150,16 @@ curl http://127.0.0.1:3000/v1/messages \
 - `stream: true` emits protocol-compatible SSE frames, but Agent I still generates a complete job result first; the adapter then emits that result in chunks. It is not token-by-token streaming from Yahoo.
 - OpenAI sampling controls such as `temperature`, `top_p`, and `max_tokens`, and Anthropic's required `max_tokens`, are accepted for request compatibility but are not enforced by the Yahoo Agent I upstream.
 - Token usage fields are estimates based on UTF-8 size, not exact provider tokenizer counts or billing data.
-- Text-only content is supported. Image input, tool/function calling, and tool-result messages are rejected for now; tool support will be added separately.
+- Text content and tool calling are supported. Image input remains unsupported.
+- OpenAI tools use `tools: [{ type: "function", function: { name, description, parameters } }]`; Anthropic tools use `tools: [{ name, description, input_schema }]`.
+- Tool definitions and arguments are translated through a prompt-based DSML protocol. This is not native Yahoo tool calling, and the upstream model may fail to emit valid DSML on some prompts.
+- DSML calls are parsed and checked against the declared tool names and supported JSON Schema constraints before being returned. Invalid calls receive up to two formatting/validation recovery attempts.
+- Multiple tool calls in one response are supported. The backend returns the tool request only; the API client must execute it and send the result in the next request. The backend does not execute client tools.
+- OpenAI continuation uses assistant `tool_calls` followed by `role: "tool"` messages. Anthropic continuation uses assistant `tool_use` blocks followed by user `tool_result` blocks.
+- Tool-call requests run in direct mode and are limited to 30,000 combined UTF-8 bytes for the instruction, tool schemas, and conversation. Long-document analyze/transform modes are not supported together with tool calls.
+- Tool-call recovery detects the same set of calls repeated across three consecutive assistant turns and asks the model to stop calling tools.
+- JSON Schema validation covers common constraints including types, required/properties, additionalProperties, enum/const, combinators, local references, string and numeric limits, arrays, and pattern constraints. It is not a complete JSON Schema implementation; external references and format-specific validation are not performed.
+- The backend does not add internal Web Search, Web Fetch, shell, or filesystem executors.
 - `n` must be 1 on the OpenAI route.
 
 ## Processing modes
