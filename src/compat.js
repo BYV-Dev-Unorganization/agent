@@ -103,6 +103,7 @@ function formatOpenAIAssistantToolCalls(calls, label) {
   for (let index = 0; index < calls.length; index += 1) {
     const call = calls[index];
     if (!call || typeof call !== "object" || call.type !== "function" ||
+        typeof call.id !== "string" || !call.id.trim() ||
         !call.function || typeof call.function.name !== "string" ||
         typeof call.function.arguments !== "string") {
       throw new CompatRequestError(label + ".tool_calls[" + index + "] is invalid");
