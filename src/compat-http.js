@@ -403,11 +403,19 @@ async function sendAnthropicStream(res, getOutcome, request, promptTokens) {
 export async function handleCompatRequest(req, res, context) {
   const url = new URL(req.url ?? "/", "http://localhost");
   const isModels = req.method === "GET" && url.pathname === "/v1/models";
+  // Both compatibility APIs use GET /v1/models. Anthropic clients identify
+  // themselves with anthropic-version and/or x-api-key; OpenAI uses Bearer.
+  const isAnthropicModels = isModels && (
+    req.headers["anthropic-version"] !== undefined ||
+    req.headers["x-api-key"] !== undefined
+  );
   const protocol = req.method === "POST" && url.pathname === "/v1/messages"
     ? "anthropic"
-    : ((req.method === "POST" && url.pathname === "/v1/chat/completions") || isModels)
-      ? "openai"
-      : null;
+    : isModels
+      ? (isAnthropicModels ? "anthropic" : "openai")
+      : req.method === "POST" && url.pathname === "/v1/chat/completions"
+        ? "openai"
+        : null;
 
   if (!protocol) return false;
 
@@ -417,10 +425,36 @@ export async function handleCompatRequest(req, res, context) {
   }
 
   if (isModels) {
-    context.sendJson(res, 200, {
-      object: "list",
-      data: [{ id: "agent-i", object: "model", created: 0, owned_by: "BYV-Dev-Unorganization" }]
-    });
+    if (protocol === "anthropic") {
+      context.sendJson(res, 200, {
+        data: [{
+          type: "model",
+          id: "claude-agent-v1",
+          display_name: "Claude Agent v1",
+          created_at: "2026-11-07T00:00:00Z",
+          deprecated_at: null,
+          lifecycle: "active",
+          line: null,
+          max_input_tokens: null,
+          max_tokens: null,
+          retires_at: null,
+          capabilities: null
+        }],
+        first_id: "claude-agent-v1",
+        last_id: "claude-agent-v1",
+        has_more: false
+      });
+    } else {
+      context.sendJson(res, 200, {
+        object: "list",
+        data: [{
+          id: "gpt-agent-v1",
+          object: "model",
+          created: 1794009600,
+          owned_by: "BYV-Dev-Unorganization"
+        }]
+      });
+    }
     return true;
   }
 
