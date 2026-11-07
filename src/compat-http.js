@@ -216,7 +216,7 @@ async function resolveToolOutcome(initialJob, initialPayload, request, protocol,
   for (let attempt = 0; attempt <= MAX_TOOL_RECOVERY_ATTEMPTS; attempt += 1) {
     const parsed = parseDsmlToolCalls(job.result);
     if (!parsed.sawToolMarkup) {
-      if (!["required", "any", "tool"].includes(request.toolChoice.mode) && !forceTextOnly) {
+      if (forceTextOnly || !["required", "any", "tool"].includes(request.toolChoice.mode)) {
         return { job, text: job.result, toolCalls: [] };
       }
       failure = "tool_choice requires a tool call, but the response contained no DSML calls block.";
