@@ -164,7 +164,7 @@ test("builds a DeepSeek-style tool prompt with tools before the latest user mess
   assert.ok(prompt.indexOf("### CONVERSATION HISTORY") < prompt.indexOf("### TOOLS"));
   assert.ok(prompt.indexOf("### TOOLS") < prompt.indexOf("### LATEST USER MESSAGE"));
   assert.match(prompt, /lookup_record\\(id\\*: integer; include_history: boolean\\)/);
-  assert.ok(prompt.startsWith("[REQUIRED: Call the tool \\"lookup_record\\" NOW."));
+  assert.ok(prompt.startsWith('[REQUIRED: Call the tool "lookup_record" NOW.'));
 
   assert.match(prompt, /<｜DSML｜ calls>/);
   assert.match(prompt, /<｜DSML｜ invoke name="TOOL_NAME">/);
