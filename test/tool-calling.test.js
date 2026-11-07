@@ -188,3 +188,23 @@ test("builds a tool-result continuation prompt with original task context", () =
   assert.ok(prompt.includes("Record 42 was found."));
   assert.match(prompt, /If the task is complete, provide the final answer/);
 });
+
+
+test("prefixes required tool choices and disables tools when choice is none", () => {
+  const requiredPrompt = buildToolCallingPrompt({
+    messages: [{ role: "user", content: "Inspect this record." }],
+    tools,
+    toolChoice: { mode: "required" }
+  });
+  assert.ok(requiredPrompt.startsWith("[REQUIRED: Call at least one tool"));
+  assert.ok(requiredPrompt.includes("Inspect this record."));
+
+  const disabledPrompt = buildToolCallingPrompt({
+    messages: [{ role: "user", content: "Explain this record." }],
+    tools,
+    toolChoice: { mode: "none" }
+  });
+  assert.ok(disabledPrompt.startsWith("=== STOP: DO NOT CALL TOOLS ==="));
+  assert.ok(disabledPrompt.includes("Tool calling is disabled for this turn."));
+  assert.ok(!disabledPrompt.includes("[REQUIRED: Call at least one tool"));
+});
