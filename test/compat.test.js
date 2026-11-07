@@ -6,6 +6,7 @@ import { createBackendServer } from "../src/server.js";
 let app;
 let baseUrl;
 let db;
+let lastGatewayPrompt = "";
 
 before(async () => {
   db = openDatabase(":memory:");
@@ -14,8 +15,9 @@ before(async () => {
     apiToken: "compat-test-token",
     gateway: {
       async chat(prompt) {
-        if (prompt.includes("TOOL CALL POLICY:")) return "I will answer without calling a tool.";
-        if (prompt.includes("TOOL LOOP RECOVERY:")) return "I will answer without calling a tool.";
+        lastGatewayPrompt = prompt;
+        if (prompt.includes("=== STOP: DO NOT CALL TOOLS ===")) return "I will answer without calling a tool.";
+        if (prompt.includes("=== TEXT-ONLY RECOVERY ===")) return "I will answer without calling a tool.";
         if (prompt.includes("[tool_result id=call_")) return "OpenAI record 42 details confirmed.";
         if (prompt.includes("Record 42 was found.")) return "Record 42 details confirmed.";
         if (prompt.includes("fixture_lookup")) {
@@ -169,6 +171,13 @@ test("OpenAI tools return validated tool_calls without executing them on the bac
   assert.equal(data.choices[0].message.tool_calls.length, 1);
   assert.equal(data.choices[0].message.tool_calls[0].function.name, "fixture_lookup");
   assert.deepEqual(JSON.parse(data.choices[0].message.tool_calls[0].function.arguments), { id: 42 });
+  assert.match(lastGatewayPrompt, /### TOOLS/);
+  assert.match(lastGatewayPrompt, /### LATEST USER MESSAGE/);
+  assert.match(lastGatewayPrompt, /Look up record 42/);
+  assert.doesNotMatch(lastGatewayPrompt, /SOURCE TEXT:/);
+  assert.ok(lastGatewayPrompt.indexOf("### TOOLS") < lastGatewayPrompt.indexOf("### LATEST USER MESSAGE"));
+  const savedJob = db.prepare("SELECT prompt_format FROM jobs WHERE id=?").get(response.headers.get("x-agent-i-job-id"));
+  assert.equal(savedJob.prompt_format, "raw");
 });
 
 test("OpenAI accepts tool-result messages and continues the conversation", async () => {
@@ -331,6 +340,9 @@ test("Anthropic tools return tool_use blocks and accept tool_result messages", a
   const resumedData = await resumed.json();
   assert.equal(resumedData.stop_reason, "end_turn");
   assert.deepEqual(resumedData.content, [{ type: "text", text: "Record 42 details confirmed." }]);
+  assert.match(lastGatewayPrompt, /=== LATEST TOOL RESULTS ===/);
+  assert.match(lastGatewayPrompt, /Record 42 was found\\./);
+  assert.match(lastGatewayPrompt, /=== ORIGINAL USER REQUEST ===/);
 });
 
 test("OpenAI streaming emits tool_calls and the tool_calls finish reason", async () => {
