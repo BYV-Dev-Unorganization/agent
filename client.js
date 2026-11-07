@@ -80,7 +80,7 @@ export class AgentIClient {
         "sec-fetch-site": "same-site",
         "sec-fetch-mode": "cors",
         "sec-fetch-dest": "empty",
-        "accept-language": "ja",
+        "accept-language": "en",
         origin: "https://search.yahoo.co.jp",
         referer: "https://search.yahoo.co.jp/",
         priority: "u=3, i",
