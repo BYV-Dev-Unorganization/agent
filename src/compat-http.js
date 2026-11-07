@@ -4,8 +4,14 @@ import {
   normalizeAnthropicRequest,
   estimateTokens
 } from "./compat.js";
+import {
+  parseDsmlToolCalls,
+  validateToolCalls,
+  hasRepeatedToolCallLoop
+} from "./tool-calling.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const MAX_TOOL_RECOVERY_ATTEMPTS = 2;
 
 function isAuthorized(req, token, protocol) {
   if (!token) return true;
@@ -85,8 +91,33 @@ function splitForStream(text, size = 900) {
   return chunks;
 }
 
-function buildOpenAIResponse(job, request, promptTokens) {
-  const completionTokens = estimateTokens(job.result);
+function makeToolCallIds(calls, protocol) {
+  return calls.map((call) => ({
+    id: (protocol === "anthropic" ? "toolu_" : "call_") + randomUUID().replaceAll("-", ""),
+    name: call.name,
+    input: call.input
+  }));
+}
+
+function buildOpenAIResponse(outcome, request, promptTokens) {
+  const text = outcome.text ?? "";
+  const toolCalls = outcome.toolCalls ?? [];
+  const completionTokens = estimateTokens(text + toolCalls.map((call) => JSON.stringify(call.input)).join(""));
+  const message = {
+    role: "assistant",
+    content: toolCalls.length ? (text || null) : text
+  };
+  if (toolCalls.length) {
+    message.tool_calls = toolCalls.map((call) => ({
+      id: call.id,
+      type: "function",
+      function: {
+        name: call.name,
+        arguments: JSON.stringify(call.input)
+      }
+    }));
+  }
+
   return {
     id: "chatcmpl-" + randomUUID().replaceAll("-", ""),
     object: "chat.completion",
@@ -94,8 +125,8 @@ function buildOpenAIResponse(job, request, promptTokens) {
     model: request.model,
     choices: [{
       index: 0,
-      message: { role: "assistant", content: job.result },
-      finish_reason: "stop"
+      message,
+      finish_reason: toolCalls.length ? "tool_calls" : "stop"
     }],
     usage: {
       prompt_tokens: promptTokens,
@@ -105,18 +136,30 @@ function buildOpenAIResponse(job, request, promptTokens) {
   };
 }
 
-function buildAnthropicResponse(job, request, promptTokens) {
+function buildAnthropicResponse(outcome, request, promptTokens) {
+  const text = outcome.text ?? "";
+  const toolCalls = outcome.toolCalls ?? [];
+  const content = [];
+  if (text) content.push({ type: "text", text });
+  for (const call of toolCalls) {
+    content.push({
+      type: "tool_use",
+      id: call.id,
+      name: call.name,
+      input: call.input
+    });
+  }
   return {
     id: "msg_" + randomUUID().replaceAll("-", ""),
     type: "message",
     role: "assistant",
     model: request.model,
-    content: [{ type: "text", text: job.result }],
-    stop_reason: "end_turn",
+    content,
+    stop_reason: toolCalls.length ? "tool_use" : "end_turn",
     stop_sequence: null,
     usage: {
       input_tokens: promptTokens,
-      output_tokens: estimateTokens(job.result)
+      output_tokens: estimateTokens(text + toolCalls.map((call) => JSON.stringify(call.input)).join(""))
     }
   };
 }
@@ -145,7 +188,83 @@ async function waitForJob(readJob, jobId, onPending, isClosed) {
   }
 }
 
-async function sendOpenAIStream(res, getJob, request) {
+function toolRecoveryInstruction(request, reason, forceTextOnly) {
+  const recovery = forceTextOnly
+    ? [
+        "TOOL LOOP RECOVERY:",
+        "A repeated identical tool call was detected. Do not call any tool again in this turn.",
+        "Do not emit DSML markup. Give the best possible plain-text answer using the conversation and tool results already available."
+      ]
+    : [
+        "TOOL CALL FORMAT RECOVERY:",
+        "Your previous response did not contain a valid DSML tool call.",
+        "Fix the issue described below. Emit exactly one valid DSML calls block when a tool is required.",
+        "Use only declared tool names and schema-valid arguments. Do not add explanatory text outside the calls block.",
+        "Validation error: " + reason
+      ];
+  return request.instruction + "\n\n" + recovery.join("\n");
+}
+
+async function resolveToolOutcome(initialJob, initialPayload, request, protocol, context, onPending, isClosed) {
+  if (!request.hasTools) {
+    return { job: initialJob, text: initialJob.result, toolCalls: [] };
+  }
+
+  let job = initialJob;
+  let forceTextOnly = false;
+  let failure = "The model did not return a tool call.";
+  for (let attempt = 0; attempt <= MAX_TOOL_RECOVERY_ATTEMPTS; attempt += 1) {
+    const parsed = parseDsmlToolCalls(job.result);
+    if (!parsed.sawToolMarkup) {
+      if (!["required", "any", "tool"].includes(request.toolChoice.mode) && !forceTextOnly) {
+        return { job, text: job.result, toolCalls: [] };
+      }
+      failure = "tool_choice requires a tool call, but the response contained no DSML calls block.";
+    } else if (parsed.errors.length) {
+      failure = parsed.errors.join(" ");
+    } else {
+      const validation = validateToolCalls(
+        parsed.calls,
+        request.tools,
+        forceTextOnly ? { mode: "none" } : request.toolChoice
+      );
+      if (!validation.valid) {
+        failure = validation.error;
+      } else if (hasRepeatedToolCallLoop(parsed.calls, request.previousToolCalls)) {
+        failure = "An identical tool call was already requested twice in the recent conversation.";
+        forceTextOnly = true;
+      } else {
+        return {
+          job,
+          text: parsed.text,
+          toolCalls: makeToolCallIds(parsed.calls, protocol)
+        };
+      }
+    }
+
+    if (attempt === MAX_TOOL_RECOVERY_ATTEMPTS) break;
+    const retryPayload = {
+      ...initialPayload,
+      conversationId: initialJob.conversation_id,
+      mode: "direct",
+      instruction: toolRecoveryInstruction(request, failure, forceTextOnly)
+    };
+    const retry = context.insertJob(context.db, retryPayload);
+    job = await waitForJob(
+      (id) => context.readJob(context.db, id),
+      retry.jobId,
+      onPending,
+      isClosed
+    );
+    if (!job || isClosed?.()) return null;
+  }
+
+  const error = new Error("Agent I could not produce a valid tool call after recovery: " + failure);
+  error.status = 502;
+  throw error;
+}
+
+async function sendOpenAIStream(res, getOutcome, request) {
   const id = "chatcmpl-" + randomUUID().replaceAll("-", "");
   const created = Math.floor(Date.now() / 1000);
   res.writeHead(200, {
@@ -157,9 +276,9 @@ async function sendOpenAIStream(res, getJob, request) {
   res.flushHeaders?.();
   openAIChunk(res, id, created, request.model, { role: "assistant" });
 
-  let job;
+  let outcome;
   try {
-    job = await getJob(() => {
+    outcome = await getOutcome(() => {
       if (res.destroyed || res.writableEnded) return false;
       res.write(": keep-alive\n\n");
       return true;
@@ -168,17 +287,32 @@ async function sendOpenAIStream(res, getJob, request) {
     if (!res.destroyed && !res.writableEnded) openAIErrorEvent(res, error.message);
     return;
   }
-  if (!job || res.destroyed || res.writableEnded) return;
+  if (!outcome || res.destroyed || res.writableEnded) return;
 
-  for (const chunk of splitForStream(job.result)) {
+  for (const chunk of splitForStream(outcome.text ?? "")) {
     openAIChunk(res, id, created, request.model, { content: chunk });
   }
-  openAIChunk(res, id, created, request.model, {}, "stop");
+  const toolCalls = outcome.toolCalls ?? [];
+  for (let index = 0; index < toolCalls.length; index += 1) {
+    const call = toolCalls[index];
+    openAIChunk(res, id, created, request.model, {
+      tool_calls: [{
+        index,
+        id: call.id,
+        type: "function",
+        function: {
+          name: call.name,
+          arguments: JSON.stringify(call.input)
+        }
+      }]
+    });
+  }
+  openAIChunk(res, id, created, request.model, {}, toolCalls.length ? "tool_calls" : "stop");
   res.write("data: [DONE]\n\n");
   res.end();
 }
 
-async function sendAnthropicStream(res, getJob, request, promptTokens) {
+async function sendAnthropicStream(res, getOutcome, request, promptTokens) {
   const id = "msg_" + randomUUID().replaceAll("-", "");
   const message = {
     id,
@@ -198,15 +332,10 @@ async function sendAnthropicStream(res, getJob, request, promptTokens) {
   });
   res.flushHeaders?.();
   anthropicEvent(res, "message_start", { type: "message_start", message });
-  anthropicEvent(res, "content_block_start", {
-    type: "content_block_start",
-    index: 0,
-    content_block: { type: "text", text: "" }
-  });
 
-  let job;
+  let outcome;
   try {
-    job = await getJob(() => {
+    outcome = await getOutcome(() => {
       if (res.destroyed || res.writableEnded) return false;
       res.write(": keep-alive\n\n");
       return true;
@@ -215,20 +344,59 @@ async function sendAnthropicStream(res, getJob, request, promptTokens) {
     if (!res.destroyed && !res.writableEnded) anthropicErrorEvent(res, error.message);
     return;
   }
-  if (!job || res.destroyed || res.writableEnded) return;
+  if (!outcome || res.destroyed || res.writableEnded) return;
 
-  for (const chunk of splitForStream(job.result)) {
+  let blockIndex = 0;
+  if (outcome.text) {
+    anthropicEvent(res, "content_block_start", {
+      type: "content_block_start",
+      index: blockIndex,
+      content_block: { type: "text", text: "" }
+    });
+    for (const chunk of splitForStream(outcome.text)) {
+      anthropicEvent(res, "content_block_delta", {
+        type: "content_block_delta",
+        index: blockIndex,
+        delta: { type: "text_delta", text: chunk }
+      });
+    }
+    anthropicEvent(res, "content_block_stop", { type: "content_block_stop", index: blockIndex });
+    blockIndex += 1;
+  }
+
+  const toolCalls = outcome.toolCalls ?? [];
+  for (const call of toolCalls) {
+    anthropicEvent(res, "content_block_start", {
+      type: "content_block_start",
+      index: blockIndex,
+      content_block: {
+        type: "tool_use",
+        id: call.id,
+        name: call.name,
+        input: {}
+      }
+    });
     anthropicEvent(res, "content_block_delta", {
       type: "content_block_delta",
-      index: 0,
-      delta: { type: "text_delta", text: chunk }
+      index: blockIndex,
+      delta: {
+        type: "input_json_delta",
+        partial_json: JSON.stringify(call.input)
+      }
     });
+    anthropicEvent(res, "content_block_stop", { type: "content_block_stop", index: blockIndex });
+    blockIndex += 1;
   }
-  anthropicEvent(res, "content_block_stop", { type: "content_block_stop", index: 0 });
+
+  const outputTokens = estimateTokens((outcome.text ?? "") +
+    toolCalls.map((call) => JSON.stringify(call.input)).join(""));
   anthropicEvent(res, "message_delta", {
     type: "message_delta",
-    delta: { stop_reason: "end_turn", stop_sequence: null },
-    usage: { output_tokens: estimateTokens(job.result) }
+    delta: {
+      stop_reason: toolCalls.length ? "tool_use" : "end_turn",
+      stop_sequence: null
+    },
+    usage: { output_tokens: outputTokens }
   });
   anthropicEvent(res, "message_stop", { type: "message_stop" });
   res.end();
@@ -271,35 +439,38 @@ export async function handleCompatRequest(req, res, context) {
       input: request.input,
       instruction: request.instruction,
       mode: request.mode
-    });
+    }, { toolCalling: request.hasTools });
     const created = context.insertJob(context.db, payload);
     res.setHeader("x-agent-i-job-id", created.jobId);
     res.setHeader("x-agent-i-conversation-id", created.conversationId);
     res.setTimeout?.(0);
 
     const promptTokens = estimateTokens(request.promptForUsage);
-    const getJob = (onPending, isClosed) =>
-      waitForJob(
+    const getOutcome = async (onPending, isClosed) => {
+      const job = await waitForJob(
         (id) => context.readJob(context.db, id),
         created.jobId,
         onPending,
         isClosed
       );
+      if (!job || isClosed?.()) return null;
+      return resolveToolOutcome(job, payload, request, protocol, context, onPending, isClosed);
+    };
 
     if (request.stream) {
       if (protocol === "openai") {
-        await sendOpenAIStream(res, getJob, request);
+        await sendOpenAIStream(res, getOutcome, request);
       } else {
-        await sendAnthropicStream(res, getJob, request, promptTokens);
+        await sendAnthropicStream(res, getOutcome, request, promptTokens);
       }
       return true;
     }
 
-    const job = await getJob();
-    if (!job || res.destroyed || res.writableEnded) return true;
+    const outcome = await getOutcome();
+    if (!outcome || res.destroyed || res.writableEnded) return true;
     const response = protocol === "openai"
-      ? buildOpenAIResponse(job, request, promptTokens)
-      : buildAnthropicResponse(job, request, promptTokens);
+      ? buildOpenAIResponse(outcome, request, promptTokens)
+      : buildAnthropicResponse(outcome, request, promptTokens);
     context.sendJson(res, 200, response);
   } catch (error) {
     const status = Number.isInteger(error?.status) ? error.status : 500;
