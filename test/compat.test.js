@@ -13,7 +13,10 @@ before(async () => {
     db,
     apiToken: "compat-test-token",
     gateway: {
-      async chat() {
+      async chat(prompt) {
+        if (prompt.includes("fixture_lookup")) {
+          return "<｜DSML｜ calls><｜DSML｜ invoke name=\"fixture_lookup\"><｜DSML｜ parameter name=\"id\" string=\"false\">42</｜DSML｜ parameter></｜DSML｜ invoke></｜DSML｜ calls>";
+        }
         return "Mock Agent I response";
       }
     }
@@ -129,7 +132,7 @@ test("Anthropic streaming emits the Messages event sequence", async () => {
   assert.match(stream, /event: message_stop/);
 });
 
-test("OpenAI tools are rejected with an OpenAI-shaped error until tools are implemented", async () => {
+test("OpenAI tools return validated tool_calls without executing them on the backend", async () => {
   const response = await fetch(baseUrl + "/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -138,15 +141,95 @@ test("OpenAI tools are rejected with an OpenAI-shaped error until tools are impl
     },
     body: JSON.stringify({
       model: "agent-i",
-      messages: [{ role: "user", content: "Search the web." }],
-      tools: [{ type: "function", function: { name: "search" } }]
+      messages: [{ role: "user", content: "Look up record 42." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "fixture_lookup",
+          description: "Look up a fixture record.",
+          parameters: {
+            type: "object",
+            properties: { id: { type: "integer" } },
+            required: ["id"],
+            additionalProperties: false
+          }
+        }
+      }]
     })
   });
 
-  assert.equal(response.status, 400);
+  assert.equal(response.status, 200);
   const data = await response.json();
-  assert.equal(data.error.type, "invalid_request_error");
-  assert.match(data.error.message, /tools are not supported yet/i);
+  assert.equal(data.choices[0].finish_reason, "tool_calls");
+  assert.equal(data.choices[0].message.content, null);
+  assert.equal(data.choices[0].message.tool_calls.length, 1);
+  assert.equal(data.choices[0].message.tool_calls[0].function.name, "fixture_lookup");
+  assert.deepEqual(JSON.parse(data.choices[0].message.tool_calls[0].function.arguments), { id: 42 });
+});
+
+test("Anthropic tools return tool_use blocks and accept tool_result messages", async () => {
+  const initial = await fetch(baseUrl + "/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": "compat-test-token",
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "agent-i",
+      max_tokens: 512,
+      messages: [{ role: "user", content: "Look up record 42." }],
+      tools: [{
+        name: "fixture_lookup",
+        description: "Look up a fixture record.",
+        input_schema: {
+          type: "object",
+          properties: { id: { type: "integer" } },
+          required: ["id"],
+          additionalProperties: false
+        }
+      }]
+    })
+  });
+
+  assert.equal(initial.status, 200);
+  const data = await initial.json();
+  assert.equal(data.stop_reason, "tool_use");
+  assert.deepEqual(data.content[0], {
+    type: "tool_use",
+    id: data.content[0].id,
+    name: "fixture_lookup",
+    input: { id: 42 }
+  });
+
+  const resumed = await fetch(baseUrl + "/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": "compat-test-token",
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "agent-i",
+      max_tokens: 512,
+      messages: [
+        { role: "user", content: "Look up record 42." },
+        { role: "assistant", content: data.content },
+        { role: "user", content: [{
+          type: "tool_result",
+          tool_use_id: data.content[0].id,
+          content: "Record 42 was found."
+        }] }
+      ],
+      tools: [{
+        name: "fixture_lookup",
+        description: "Look up a fixture record.",
+        input_schema: { type: "object", properties: { id: { type: "integer" } }, required: ["id"] }
+      }]
+    })
+  });
+
+  assert.equal(resumed.status, 200);
+  const resumedData = await resumed.json();
+  assert.equal(resumedData.stop_reason, "tool_use");
 });
 
 test("OpenAI model list includes the Agent I model alias", async () => {
