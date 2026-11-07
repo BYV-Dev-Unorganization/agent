@@ -211,8 +211,10 @@ async function resolveToolOutcome(initialJob, initialPayload, request, protocol,
   }
 
   let job = initialJob;
-  let forceTextOnly = false;
-  let failure = "The model did not return a tool call.";
+  let forceTextOnly = request.toolChoice.mode === "none";
+  let failure = forceTextOnly
+    ? "tool_choice=none disables all tool calls."
+    : "The model did not return a tool call.";
   for (let attempt = 0; attempt <= MAX_TOOL_RECOVERY_ATTEMPTS; attempt += 1) {
     const parsed = parseDsmlToolCalls(job.result);
     if (!parsed.sawToolMarkup) {
