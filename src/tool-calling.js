@@ -345,7 +345,7 @@ function validateAgainstSchema(value, schema, path, rootSchema, depth = 0) {
 
   if (schema.$ref !== undefined) {
     const target = resolveLocalReference(rootSchema, schema.$ref);
-    if (!target) return path + " uses an unresolved or unsupported $ref.";
+    if (target === null) return path + " uses an unresolved or unsupported $ref.";
     const error = validateAgainstSchema(value, target, path, rootSchema, depth + 1);
     if (error) return error;
   }
