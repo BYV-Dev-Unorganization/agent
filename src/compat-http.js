@@ -247,7 +247,7 @@ async function resolveToolOutcome(initialJob, initialPayload, request, protocol,
     if (attempt === MAX_TOOL_RECOVERY_ATTEMPTS) break;
     const retryPayload = {
       ...initialPayload,
-      conversationId: initialJob.conversation_id,
+      conversationId: initialJob.conversationId,
       mode: "direct",
       instruction: toolRecoveryInstruction(request, failure, forceTextOnly)
     };
