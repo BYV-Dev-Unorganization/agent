@@ -232,6 +232,72 @@ test("Anthropic tools return tool_use blocks and accept tool_result messages", a
   assert.deepEqual(resumedData.content, [{ type: "text", text: "Record 42 details confirmed." }]);
 });
 
+test("OpenAI streaming emits tool_calls and the tool_calls finish reason", async () => {
+  const response = await fetch(baseUrl + "/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer compat-test-token",
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "agent-i",
+      stream: true,
+      messages: [{ role: "user", content: "Look up record 42." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "fixture_lookup",
+          parameters: {
+            type: "object",
+            properties: { id: { type: "integer" } },
+            required: ["id"],
+            additionalProperties: false
+          }
+        }
+      }]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  const stream = await response.text();
+  assert.match(stream, /"tool_calls":\[\{"index":0/);
+  assert.match(stream, /"name":"fixture_lookup"/);
+  assert.match(stream, /"finish_reason":"tool_calls"/);
+  assert.match(stream, /data: \[DONE\]/);
+});
+
+test("Anthropic streaming emits tool_use content blocks", async () => {
+  const response = await fetch(baseUrl + "/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": "compat-test-token",
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "agent-i",
+      max_tokens: 512,
+      stream: true,
+      messages: [{ role: "user", content: "Look up record 42." }],
+      tools: [{
+        name: "fixture_lookup",
+        input_schema: {
+          type: "object",
+          properties: { id: { type: "integer" } },
+          required: ["id"],
+          additionalProperties: false
+        }
+      }]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  const stream = await response.text();
+  assert.match(stream, /"type":"tool_use"/);
+  assert.match(stream, /"type":"input_json_delta"/);
+  assert.match(stream, /"stop_reason":"tool_use"/);
+  assert.match(stream, /event: message_stop/);
+});
+
 test("OpenAI model list includes the Agent I model alias", async () => {
   const response = await fetch(baseUrl + "/v1/models", {
     headers: { authorization: "Bearer compat-test-token" }
