@@ -14,6 +14,7 @@ before(async () => {
     apiToken: "compat-test-token",
     gateway: {
       async chat(prompt) {
+        if (prompt.includes("Record 42 was found.")) return "Record 42 details confirmed.";
         if (prompt.includes("fixture_lookup")) {
           return "<｜DSML｜ calls><｜DSML｜ invoke name=\"fixture_lookup\"><｜DSML｜ parameter name=\"id\" string=\"false\">42</｜DSML｜ parameter></｜DSML｜ invoke></｜DSML｜ calls>";
         }
@@ -194,12 +195,10 @@ test("Anthropic tools return tool_use blocks and accept tool_result messages", a
   assert.equal(initial.status, 200);
   const data = await initial.json();
   assert.equal(data.stop_reason, "tool_use");
-  assert.deepEqual(data.content[0], {
-    type: "tool_use",
-    id: data.content[0].id,
-    name: "fixture_lookup",
-    input: { id: 42 }
-  });
+  assert.equal(data.content[0].type, "tool_use");
+  assert.match(data.content[0].id, /^toolu_/);
+  assert.equal(data.content[0].name, "fixture_lookup");
+  assert.deepEqual(data.content[0].input, { id: 42 });
 
   const resumed = await fetch(baseUrl + "/v1/messages", {
     method: "POST",
@@ -229,7 +228,8 @@ test("Anthropic tools return tool_use blocks and accept tool_result messages", a
 
   assert.equal(resumed.status, 200);
   const resumedData = await resumed.json();
-  assert.equal(resumedData.stop_reason, "tool_use");
+  assert.equal(resumedData.stop_reason, "end_turn");
+  assert.deepEqual(resumedData.content, [{ type: "text", text: "Record 42 details confirmed." }]);
 });
 
 test("OpenAI model list includes the Agent I model alias", async () => {
