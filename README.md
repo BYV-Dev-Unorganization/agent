@@ -123,7 +123,7 @@ OpenAI Chat Completions request:
 
 ~~~json
 {
-  "model": "agent-i",
+  "model": "gpt-agent-v1",
   "messages": [{ "role": "user", "content": "Look up record 42." }],
   "tools": [{
     "type": "function",
