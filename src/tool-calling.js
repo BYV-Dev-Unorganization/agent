@@ -337,6 +337,20 @@ function resolveLocalReference(root, reference) {
   return current === null || current === undefined ? null : current;
 }
 
+function compileSafePattern(pattern, label) {
+  if (pattern.length > 128) throw new Error(label + " exceeds the 128-character safe pattern limit.");
+  // Reject quantified groups containing alternation or other quantifiers to avoid common
+  // catastrophic-backtracking patterns in untrusted client-supplied schemas.
+  if (/\((?:\?:)?[^)]*[|*+?{][^)]*\)[*+?{]/.test(pattern)) {
+    throw new Error(label + " uses an unsafe nested or quantified-group pattern.");
+  }
+  try {
+    return new RegExp(pattern);
+  } catch {
+    throw new Error(label + " has an invalid regular expression.");
+  }
+}
+
 function validateAgainstSchema(value, schema, path, rootSchema, depth = 0) {
   if (schema === true) return null;
   if (schema === false) return path + " is not allowed by its schema.";
@@ -404,9 +418,9 @@ function validateAgainstSchema(value, schema, path, rootSchema, depth = 0) {
       }
       let matchedPattern = false;
       for (const [pattern, childSchema] of Object.entries(patternProperties)) {
-        if (pattern.length > 256) return path + " has a patternProperties expression longer than 256 characters.";
         let matcher;
-        try { matcher = new RegExp(pattern); } catch { return path + " has an invalid patternProperties expression."; }
+        try { matcher = compileSafePattern(pattern, path + " patternProperties"); }
+        catch (error) { return error.message; }
         if (matcher.test(key)) {
           matchedPattern = true;
           const error = validateAgainstSchema(value[key], childSchema, path + "." + key, rootSchema, depth + 1);
@@ -431,6 +445,7 @@ function validateAgainstSchema(value, schema, path, rootSchema, depth = 0) {
       return path + " must contain at most " + schema.maxItems + " item(s).";
     }
     if (schema.uniqueItems === true) {
+      if (value.length > 1000) return path + " has too many items for safe uniqueItems validation.";
       for (let index = 0; index < value.length; index += 1) {
         for (let other = index + 1; other < value.length; other += 1) {
           if (isDeepStrictEqual(value[index], value[other])) {
@@ -463,9 +478,10 @@ function validateAgainstSchema(value, schema, path, rootSchema, depth = 0) {
       return path + " must be at most " + schema.maxLength + " character(s).";
     }
     if (typeof schema.pattern === "string") {
-      if (schema.pattern.length > 256) return path + " has a pattern constraint longer than 256 characters.";
+      if (value.length > 4096) return path + " is too long for safe pattern validation.";
       let matcher;
-      try { matcher = new RegExp(schema.pattern); } catch { return path + " has an invalid pattern constraint."; }
+      try { matcher = compileSafePattern(schema.pattern, path + " pattern"); }
+      catch (error) { return error.message; }
       if (!matcher.test(value)) return path + " does not match the required pattern.";
     }
   }
