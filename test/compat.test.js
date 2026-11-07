@@ -14,6 +14,7 @@ before(async () => {
     apiToken: "compat-test-token",
     gateway: {
       async chat(prompt) {
+        if (prompt.includes("TOOL LOOP RECOVERY:")) return "I will answer without calling a tool.";
         if (prompt.includes("Record 42 was found.")) return "Record 42 details confirmed.";
         if (prompt.includes("fixture_lookup")) {
           return "<｜DSML｜ calls><｜DSML｜ invoke name=\"fixture_lookup\"><｜DSML｜ parameter name=\"id\" string=\"false\">42</｜DSML｜ parameter></｜DSML｜ invoke></｜DSML｜ calls>";
@@ -166,6 +167,39 @@ test("OpenAI tools return validated tool_calls without executing them on the bac
   assert.equal(data.choices[0].message.tool_calls.length, 1);
   assert.equal(data.choices[0].message.tool_calls[0].function.name, "fixture_lookup");
   assert.deepEqual(JSON.parse(data.choices[0].message.tool_calls[0].function.arguments), { id: 42 });
+});
+
+test("tool_choice=none does not return tool calls", async () => {
+  const response = await fetch(baseUrl + "/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer compat-test-token",
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "agent-i",
+      messages: [{ role: "user", content: "Look up record 42." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "fixture_lookup",
+          parameters: {
+            type: "object",
+            properties: { id: { type: "integer" } },
+            required: ["id"],
+            additionalProperties: false
+          }
+        }
+      }],
+      tool_choice: "none"
+    })
+  });
+
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.choices[0].finish_reason, "stop");
+  assert.equal(data.choices[0].message.content, "I will answer without calling a tool.");
+  assert.equal(data.choices[0].message.tool_calls, undefined);
 });
 
 test("Anthropic tools return tool_use blocks and accept tool_result messages", async () => {
