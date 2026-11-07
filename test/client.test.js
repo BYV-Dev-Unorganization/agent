@@ -45,3 +45,26 @@ test("client parses Yahoo composite message payloads", async () => {
   for await (const chunk of client.chat("Hi")) chunks.push(chunk);
   assert.equal(chunks[0].text, "nested");
 });
+
+test("Yahoo chat requests send an English Accept-Language header", async () => {
+  let capturedUrl;
+  let capturedInit;
+  const client = new AgentIClient({
+    cookie: "B=test",
+    fetch: async (url, init) => {
+      capturedUrl = url;
+      capturedInit = init;
+      return new Response('data: {"text":"Hello"}\\n\\n', {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      });
+    }
+  });
+
+  for await (const _chunk of client.chat("Hi")) {
+    // Consume the response stream.
+  }
+
+  assert.equal(capturedUrl, "https://search-agent.yahoo.co.jp/v2/chat");
+  assert.equal(capturedInit.headers["accept-language"], "en");
+});
