@@ -243,6 +243,9 @@ test("OpenAI accepts tool-result messages and continues the conversation", async
   const final = await resumed.json();
   assert.equal(final.choices[0].finish_reason, "stop");
   assert.equal(final.choices[0].message.content, "OpenAI record 42 details confirmed.");
+  assert.match(lastGatewayPrompt, /=== LATEST TOOL RESULTS ===/);
+  assert.match(lastGatewayPrompt, /Record 42 was found\\./);
+  assert.match(lastGatewayPrompt, /=== ORIGINAL USER REQUEST ===/);
 });
 
 test("tool_choice=none does not return tool calls", async () => {
