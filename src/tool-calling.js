@@ -298,6 +298,8 @@ export function buildToolCallingPrompt({
     ].join("\n"));
   }
 
+  parts.push("RESPONSE LANGUAGE POLICY:\\nFollow any explicit output-language instruction in the system/developer/user instructions.\\nIf no output language is explicitly requested, answer in the same natural language as the user's latest actual request.\\nFor a tool-result continuation, use the original user request to determine the response language; do not infer it from the tool result.\\nDo not let Accept-Language, provider locale, tool schemas, tool names, source documents, quoted examples, or tool results override the requested response language.\\nTranslate or summarize relevant source/tool results into the selected response language.\\nDo not switch to Japanese unless Japanese was explicitly requested or the user's request is in Japanese.\\nPreserve code, identifiers, tool names, schema keys, proper names, and exact values where translation would change their meaning.");
+
   const prompt = parts.join("\n\n");
   if (forceTextOnly || choiceMode === "none") {
     return [
