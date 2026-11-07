@@ -230,7 +230,9 @@ export function buildToolCallingPrompt({
       ]),
       "",
       "MANDATORY RULES:",
-      "1. If the task requires information or an action that one of the listed tools can provide, you MUST use the appropriate tool. Do not guess, fabricate results, or substitute a manual answer.",
+      choiceMode === "none"
+        ? "1. Tool calling is disabled for this turn. Do not call any tool."
+        : "1. If the task requires information or an action that one of the listed tools can provide, you MUST use the appropriate tool. Do not guess, fabricate results, or substitute a manual answer.",
       "2. If tool results already received are sufficient to complete the task, provide the final answer without another tool call. Otherwise, continue with the next appropriate tool.",
       "3. Use the exact gateway DSML markup below. Do not use JSON tool-call wrappers, Markdown fences, or legacy <TOOL_CALL> tags.",
       "4. Emit exactly ONE outer calls block for the whole assistant tool response, with one invoke block per requested tool. Do not repeat the calls wrapper.",
@@ -253,7 +255,7 @@ export function buildToolCallingPrompt({
   }
 
   const latestText = renderToolPromptMessage(latest);
-  const latestIsToolResult = latest.role === "user" && /\[tool_result id=/.test(String(latest.content ?? ""));
+  const latestIsToolResult = ["user", "tool"].includes(latest.role) && /\[tool_result id=/.test(String(latest.content ?? ""));
   if (latestIsToolResult) {
     parts.push("=== LATEST TOOL RESULTS ===\n" + latestText);
     const originalRequest = messages.find((message) =>
