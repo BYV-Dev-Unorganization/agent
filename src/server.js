@@ -63,11 +63,16 @@ function normalize(body, options = {}) {
     ? "Analyze the supplied source text and answer accurately."
     : "Understand and respond helpfully to the user's message.");
   if (typeof instruction !== "string" || !instruction.trim()) throw new HttpError(400, "instruction must be a non-empty string");
-  const instructionCharsLimit = options.toolCalling ? 12000 : MAX_INSTRUCTION_CHARS;
-  const instructionBytesLimit = options.toolCalling ? 48000 : MAX_INSTRUCTION_BYTES;
+
+  const promptFormat = options.promptFormat ?? "standard";
+  if (!["standard", "raw"].includes(promptFormat)) {
+    throw new HttpError(400, "Unsupported internal prompt format");
+  }
+  const instructionCharsLimit = options.toolCalling ? 30000 : MAX_INSTRUCTION_CHARS;
+  const instructionBytesLimit = options.toolCalling ? 30000 : MAX_INSTRUCTION_BYTES;
   if (countCodePoints(instruction) > instructionCharsLimit || countUtf8Bytes(instruction) > instructionBytesLimit) {
     throw new HttpError(413, options.toolCalling
-      ? "Tool definitions and instructions exceed the 12,000-character or 48,000-byte limit"
+      ? "Tool-calling prompt exceeds the 30,000-character or 30,000-byte limit"
       : "Instruction exceeds 2,000 characters or 6,000 UTF-8 bytes");
   }
 
@@ -75,16 +80,21 @@ function normalize(body, options = {}) {
   if (!["auto", "direct", "analyze", "transform"].includes(requestedMode)) {
     throw new HttpError(400, "mode must be auto, direct, analyze, or transform");
   }
-  const combined = bytes + countUtf8Bytes(instruction);
+  const combined = promptFormat === "raw"
+    ? countUtf8Bytes(instruction)
+    : bytes + countUtf8Bytes(instruction);
   const directBudget = options.toolCalling ? 30000 : DIRECT_BUDGET_BYTES;
   let mode = requestedMode;
   if (mode === "auto") mode = combined <= DIRECT_BUDGET_BYTES ? "direct" : "analyze";
   if (mode === "direct" && combined > directBudget) {
     throw new HttpError(413, options.toolCalling
-      ? "Tool-calling requests are limited to 30,000 combined UTF-8 bytes"
+      ? "Tool-calling prompts are limited to 30,000 UTF-8 bytes"
       : "Direct mode is limited to 7,000 combined UTF-8 bytes; use analyze or transform");
   }
-  return { input, instruction, mode, chars, bytes, conversationId: body.conversationId };
+  if (options.toolCalling && mode !== "direct") {
+    throw new HttpError(400, "Tool calling requires direct mode");
+  }
+  return { input, instruction, mode, chars, bytes, conversationId: body.conversationId, promptFormat };
 }
 
 function insertJob(db, payload) {
@@ -105,12 +115,12 @@ function insertJob(db, payload) {
 
     if (!payload.conversationId) {
       db.prepare("INSERT INTO conversations(id,title,created_at,updated_at) VALUES(?,?,?,?)")
-        .run(conversationId, Array.from(payload.instruction).slice(0, 72).join("") || "New conversation", now, now);
+        .run(conversationId, Array.from(payload.input).slice(0, 72).join("") || "New conversation", now, now);
     }
     db.prepare("INSERT INTO messages(id,conversation_id,job_id,role,content,context_content,created_at) VALUES(?,?,?,'user',?,NULL,?)")
       .run(messageId, conversationId, jobId, payload.input, now);
-    db.prepare("INSERT INTO jobs(id,conversation_id,user_message_id,mode,instruction,status,stage,input_chars,input_bytes,chunks_total,chunks_done,created_at,updated_at) VALUES(?,?,?,?,?,'queued','queued',?,?,?,0,?,?)")
-      .run(jobId, conversationId, messageId, payload.mode, payload.instruction, payload.chars, payload.bytes, chunks.length, now, now);
+    db.prepare("INSERT INTO jobs(id,conversation_id,user_message_id,mode,instruction,prompt_format,status,stage,input_chars,input_bytes,chunks_total,chunks_done,created_at,updated_at) VALUES(?,?,?,?,?,?,'queued','queued',?,?,?,0,?,?)")
+      .run(jobId, conversationId, messageId, payload.mode, payload.instruction, payload.promptFormat ?? "standard", payload.chars, payload.bytes, chunks.length, now, now);
 
     const addChunk = db.prepare("INSERT INTO job_chunks(job_id,chunk_index,content,status,created_at,updated_at) VALUES(?,?,?,'pending',?,?)");
     chunks.forEach((text, index) => addChunk.run(jobId, index, text, now, now));
