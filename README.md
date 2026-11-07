@@ -61,7 +61,7 @@ The endpoint returns HTTP 202 immediately with a jobId, conversationId, chunk co
 
 Read saved conversation messages with GET /v1/conversations/{conversationId}. Add ?includeContent=1 to return full content; otherwise the API returns short previews. GET /health reports service and queue status.
 
-When API_TOKEN is set, send Authorization: Bearer YOUR_TOKEN on legacy and OpenAI routes. The Anthropic route accepts x-api-key (and also accepts Bearer for convenience).
+When API_TOKEN is set, send Authorization: Bearer YOUR_TOKEN on legacy and OpenAI routes. Anthropic routes accept x-api-key (and also accept Bearer for convenience). The shared GET /v1/models route returns the OpenAI model-list format by default; it returns the Anthropic model-list format when the request includes anthropic-version or x-api-key.
 
 ## API compatibility endpoints
 
@@ -70,7 +70,8 @@ The original asynchronous API remains unchanged. Two synchronous compatibility r
 ### OpenAI Chat Completions
 
 - POST /v1/chat/completions
-- GET /v1/models
+- GET /v1/models (OpenAI model-list format)
+- Advertised model ID: `gpt-agent-v1`
 - Authentication: Authorization: Bearer YOUR_TOKEN
 - Supports text messages with system, developer, user, and assistant roles.
 - Supports stream: true using OpenAI-style Server-Sent Events.
@@ -82,7 +83,7 @@ curl http://127.0.0.1:3000/v1/chat/completions \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "agent-i",
+    "model": "gpt-agent-v1",
     "messages": [
       {"role": "system", "content": "Answer clearly."},
       {"role": "user", "content": "Explain what Node.js is."}
@@ -93,6 +94,8 @@ curl http://127.0.0.1:3000/v1/chat/completions \
 ### Anthropic Messages
 
 - POST /v1/messages
+- GET /v1/models (Anthropic model-list format when sent with `anthropic-version` or `x-api-key`)
+- Advertised model ID: `claude-agent-v1`
 - Authentication: x-api-key: YOUR_TOKEN (Anthropic SDK-compatible); Bearer is also accepted.
 - Requires model, max_tokens, and messages.
 - Supports system text and user/assistant text messages.
@@ -106,7 +109,7 @@ curl http://127.0.0.1:3000/v1/messages \
   -H "anthropic-version: 2023-06-01" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "agent-i",
+    "model": "claude-agent-v1",
     "max_tokens": 1024,
     "messages": [
       {"role": "user", "content": "Explain what Node.js is."}
@@ -145,7 +148,7 @@ Anthropic Messages uses the same flow with `tools` entries containing `name`, `d
 
 ### Compatibility notes
 
-- The `model` value is a client-facing alias echoed in the response. The actual engine remains Yahoo Agent I; this does not connect to OpenAI or Anthropic models. GET /v1/models currently lists `agent-i`.
+- The `model` value is a client-facing alias echoed in the response. Use `gpt-agent-v1` on the OpenAI-compatible route and `claude-agent-v1` on the Anthropic Messages route. The shared GET /v1/models path returns protocol-specific list formats: OpenAI by default, Anthropic when `anthropic-version` or `x-api-key` is present. The actual engine remains Yahoo Agent I; these aliases do not connect to OpenAI or Anthropic model engines.
 - These routes are synchronous from the client's perspective: the HTTP request stays open while the durable job is processed. Large prompts still use chunking and summarization internally. For explicit asynchronous polling, continue using POST /v1/jobs.
 - `stream: true` emits protocol-compatible SSE frames, but Agent I still generates a complete job result first; the adapter then emits that result in chunks. It is not token-by-token streaming from Yahoo.
 - OpenAI sampling controls such as `temperature`, `top_p`, and `max_tokens`, and Anthropic's required `max_tokens`, are accepted for request compatibility but are not enforced by the Yahoo Agent I upstream.
