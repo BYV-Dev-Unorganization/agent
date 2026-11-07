@@ -264,11 +264,11 @@ export function buildToolCallingPrompt({
   }
 
   const latestText = renderToolPromptMessage(latest);
-  const latestIsToolResult = latest.role === "user" && /\\[tool_result id=/.test(String(latest.content ?? ""));
+  const latestIsToolResult = latest.role === "user" && /\[tool_result id=/.test(String(latest.content ?? ""));
   if (latestIsToolResult) {
     parts.push("=== LATEST TOOL RESULTS ===\n" + latestText);
     const originalRequest = messages.find((message) =>
-      message.role === "user" && !/\\[tool_result id=/.test(String(message.content ?? ""))
+      message.role === "user" && !/\[tool_result id=/.test(String(message.content ?? ""))
     );
     if (originalRequest) {
       parts.push("=== ORIGINAL USER REQUEST ===\n" + renderToolPromptMessage(originalRequest));
