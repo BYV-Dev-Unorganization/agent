@@ -15,6 +15,7 @@ before(async () => {
     gateway: {
       async chat(prompt) {
         if (prompt.includes("TOOL LOOP RECOVERY:")) return "I will answer without calling a tool.";
+        if (prompt.includes("[tool_result id=call_fixture]")) return "OpenAI record 42 details confirmed.";
         if (prompt.includes("Record 42 was found.")) return "Record 42 details confirmed.";
         if (prompt.includes("fixture_lookup")) {
           return "<｜DSML｜ calls><｜DSML｜ invoke name=\"fixture_lookup\"><｜DSML｜ parameter name=\"id\" string=\"false\">42</｜DSML｜ parameter></｜DSML｜ invoke></｜DSML｜ calls>";
@@ -167,6 +168,71 @@ test("OpenAI tools return validated tool_calls without executing them on the bac
   assert.equal(data.choices[0].message.tool_calls.length, 1);
   assert.equal(data.choices[0].message.tool_calls[0].function.name, "fixture_lookup");
   assert.deepEqual(JSON.parse(data.choices[0].message.tool_calls[0].function.arguments), { id: 42 });
+});
+
+test("OpenAI accepts tool-result messages and continues the conversation", async () => {
+  const tool = {
+    type: "function",
+    function: {
+      name: "fixture_lookup",
+      description: "Look up a fixture record.",
+      parameters: {
+        type: "object",
+        properties: { id: { type: "integer" } },
+        required: ["id"],
+        additionalProperties: false
+      }
+    }
+  };
+  const response = await fetch(baseUrl + "/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer compat-test-token",
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "agent-i",
+      messages: [{ role: "user", content: "Look up record 42." }],
+      tools: [tool]
+    })
+  });
+  assert.equal(response.status, 200);
+  const initial = await response.json();
+  const call = initial.choices[0].message.tool_calls[0];
+
+  const resumed = await fetch(baseUrl + "/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer compat-test-token",
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "agent-i",
+      messages: [
+        { role: "user", content: "Look up record 42." },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [{
+            id: call.id,
+            type: "function",
+            function: call.function
+          }]
+        },
+        {
+          role: "tool",
+          tool_call_id: call.id,
+          content: "Record 42 was found."
+        }
+      ],
+      tools: [tool]
+    })
+  });
+
+  assert.equal(resumed.status, 200);
+  const final = await resumed.json();
+  assert.equal(final.choices[0].finish_reason, "stop");
+  assert.equal(final.choices[0].message.content, "OpenAI record 42 details confirmed.");
 });
 
 test("tool_choice=none does not return tool calls", async () => {
