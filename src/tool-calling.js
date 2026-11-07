@@ -222,6 +222,7 @@ export function buildToolCallingPrompt({
   if (tools.length) {
     const lines = [
       "You have access to the tools listed below. These are the only tools available for this request.",
+      "You do not execute tools yourself. Emit tool requests in DSML; the API client executes them and sends their results back in a later message.",
       "",
       ...tools.flatMap((tool) => [
         "- " + tool.name + "(" + summarizeToolParameters(tool.input_schema) + "): " +
@@ -240,7 +241,9 @@ export function buildToolCallingPrompt({
       "6. For numbers, booleans, null, arrays, and objects, set string=\"false\" and write the value as valid JSON.",
       "7. Use each parameter name exactly as declared in the selected tool schema. Do not duplicate parameter names or invent tools or arguments.",
       "8. Do NOT write anything outside the DSML calls block when calling tools.",
-      "9. Use plain text only when no tool is needed or when the task is complete.",
+      choiceMode === "required" || choiceMode === "any" || choiceMode === "tool"
+        ? "9. Follow the forced tool choice above even if you could otherwise answer directly."
+        : "9. Use plain text only when no tool is needed or when the task is complete.",
       "",
       "REQUIRED DSML FORMAT (format example only; replace all placeholders):",
       "<｜DSML｜ calls>",
