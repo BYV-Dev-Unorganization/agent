@@ -152,7 +152,7 @@ Anthropic Messages uses the same flow with `tools` entries containing `name`, `d
 - These routes are synchronous from the client's perspective: the HTTP request stays open while the durable job is processed. Large prompts still use chunking and summarization internally. For explicit asynchronous polling, continue using POST /v1/jobs.
 - `stream: true` emits protocol-compatible SSE frames, but Agent I still generates a complete job result first; the adapter then emits that result in chunks. It is not token-by-token streaming from Yahoo.
 - OpenAI sampling controls such as `temperature`, `top_p`, and `max_tokens`, and Anthropic's required `max_tokens`, are accepted for request compatibility but are not enforced by the Yahoo Agent I upstream.
-- Yahoo Agent I chat requests send `accept-language: en` to prefer English responses. Output language can still depend on the prompt and upstream model behavior.
+- Yahoo Agent I chat requests send `accept-language: en` as a locale preference. The backend also adds an explicit response-language policy: follow any explicit output-language instruction; otherwise match the latest user request. During tool-result continuation, determine the language from the original user request and translate tool results into that language. Do not switch to Japanese unless it was requested or the user wrote in Japanese.
 - Token usage fields are estimates based on UTF-8 size, not exact provider tokenizer counts or billing data.
 - Text content and tool calling are supported. Image input remains unsupported.
 - OpenAI tools use `tools: [{ type: "function", function: { name, description, parameters } }]`; Anthropic tools use `tools: [{ name, description, input_schema }]`.
