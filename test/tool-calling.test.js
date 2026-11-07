@@ -208,3 +208,25 @@ test("prefixes required tool choices and disables tools when choice is none", ()
   assert.ok(disabledPrompt.includes("Tool calling is disabled for this turn."));
   assert.ok(!disabledPrompt.includes("[REQUIRED: Call at least one tool"));
 });
+
+
+test("keeps the original requested language after foreign-language tool results", () => {
+  const prompt = buildToolCallingPrompt({
+    messages: [
+      { role: "user", content: "Please answer in English: get the weather for Jakarta." },
+      { role: "assistant", content: '[assistant tool_use id=toolu_weather name=get_weather]\n{"city":"Jakarta"}' },
+      { role: "user", content: "[tool_result id=toolu_weather]\nジャカルタは曇りで、気温は30度です。" }
+    ],
+    tools,
+    toolChoice: { mode: "auto" }
+  });
+
+  assert.match(prompt, /RESPONSE LANGUAGE POLICY/);
+  assert.match(prompt, /Follow any explicit output-language instruction/);
+  assert.match(prompt, /use the original user request to determine the response language/);
+  assert.match(prompt, /Do not let Accept-Language, provider locale.*tool results override/);
+  assert.match(prompt, /Translate or summarize relevant source\/tool results into the selected response language/);
+  assert.match(prompt, /Do not switch to Japanese unless Japanese was explicitly requested/);
+  assert.match(prompt, /Please answer in English/);
+  assert.match(prompt, /ジャカルタは曇り/);
+});
