@@ -1,5 +1,5 @@
 import {
-  buildToolInstruction,
+  buildToolCallingPrompt,
   normalizeOpenAITools,
   normalizeAnthropicTools,
   normalizeOpenAIToolChoice,
@@ -169,6 +169,7 @@ function formatConversation(messages, allowedRoles, protocol) {
   }
 
   const parts = [];
+  const formattedMessages = [];
   const previousToolCalls = [];
   let hasUser = false;
 
@@ -223,11 +224,12 @@ function formatConversation(messages, allowedRoles, protocol) {
     if (!content.trim()) continue;
     if (message.role === "user") hasUser = true;
     parts.push("[" + message.role + "]\n" + content);
+    formattedMessages.push({ role: message.role, content });
   }
 
   if (!hasUser) throw new CompatRequestError("messages must contain at least one non-empty user message");
   if (!parts.length) throw new CompatRequestError("messages contain no text");
-  return { input: parts.join("\n\n"), previousToolCalls };
+  return { input: parts.join("\n\n"), previousToolCalls, messages: formattedMessages };
 }
 
 /**
@@ -276,21 +278,29 @@ export function normalizeOpenAIRequest(body) {
 
   const conversation = formatConversation(conversationMessages, ["user", "assistant", "tool"], "openai");
   const mode = validateToolMode(body, tools);
-  const toolInstruction = buildToolInstruction(tools, toolChoice);
-  const explicitInstruction = [body.instruction, ...(tools.length ? [toolInstruction] : [])]
-    .filter((part) => typeof part === "string" && part.trim()).join("\n\n");
-  const instruction = makeInstruction(systemParts, explicitInstruction);
+  const standardInstruction = makeInstruction(systemParts, body.instruction);
+  const toolPromptData = {
+    systemPrompt: systemParts.join("\n\n"),
+    userInstruction: body.instruction ?? "",
+    messages: conversation.messages,
+    tools,
+    toolChoice
+  };
+  const toolPrompt = tools.length ? buildToolCallingPrompt(toolPromptData) : null;
+  const instruction = toolPrompt ?? standardInstruction;
   return {
     model,
     input: conversation.input,
     instruction,
+    toolPrompt,
+    toolPromptData,
     mode,
     stream,
     tools,
     toolChoice,
     previousToolCalls: conversation.previousToolCalls,
     hasTools: tools.length > 0,
-    promptForUsage: instruction + "\n\n" + conversation.input
+    promptForUsage: toolPrompt ?? (instruction + "\n\n" + conversation.input)
   };
 }
 
@@ -320,14 +330,22 @@ export function normalizeAnthropicRequest(body) {
 
   const conversation = formatConversation(body.messages, ["user", "assistant"], "anthropic");
   const mode = validateToolMode(body, tools);
-  const toolInstruction = buildToolInstruction(tools, toolChoice);
-  const explicitInstruction = [body.instruction, ...(tools.length ? [toolInstruction] : [])]
-    .filter((part) => typeof part === "string" && part.trim()).join("\n\n");
-  const instruction = makeInstruction(systemParts, explicitInstruction);
+  const standardInstruction = makeInstruction(systemParts, body.instruction);
+  const toolPromptData = {
+    systemPrompt: systemParts.join("\n\n"),
+    userInstruction: body.instruction ?? "",
+    messages: conversation.messages,
+    tools,
+    toolChoice
+  };
+  const toolPrompt = tools.length ? buildToolCallingPrompt(toolPromptData) : null;
+  const instruction = toolPrompt ?? standardInstruction;
   return {
     model,
     input: conversation.input,
     instruction,
+    toolPrompt,
+    toolPromptData,
     mode,
     stream,
     maxTokens: body.max_tokens,
@@ -335,7 +353,7 @@ export function normalizeAnthropicRequest(body) {
     toolChoice,
     previousToolCalls: conversation.previousToolCalls,
     hasTools: tools.length > 0,
-    promptForUsage: instruction + "\n\n" + conversation.input
+    promptForUsage: toolPrompt ?? (instruction + "\n\n" + conversation.input)
   };
 }
 
