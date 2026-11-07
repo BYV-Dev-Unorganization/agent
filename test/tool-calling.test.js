@@ -213,6 +213,8 @@ test("prefixes required tool choices and disables tools when choice is none", ()
 test("keeps the original requested language after foreign-language tool results", () => {
   const prompt = buildToolCallingPrompt({
     messages: [
+      { role: "user", content: "Please answer in Japanese for that earlier request." },
+      { role: "assistant", content: "Earlier response." },
       { role: "user", content: "Please answer in English: get the weather for Jakarta." },
       { role: "assistant", content: '[assistant tool_use id=toolu_weather name=get_weather]\n{"city":"Jakarta"}' },
       { role: "user", content: "[tool_result id=toolu_weather]\nジャカルタは曇りで、気温は30度です。" }
@@ -224,9 +226,11 @@ test("keeps the original requested language after foreign-language tool results"
   assert.match(prompt, /RESPONSE LANGUAGE POLICY/);
   assert.match(prompt, /Follow any explicit output-language instruction/);
   assert.match(prompt, /use the original user request to determine the response language/);
-  assert.match(prompt, /Do not let Accept-Language, provider locale.*tool results override/);
+  assert.match(prompt, /Do not let Accept-Language, provider locale,[\s\S]*tool results override/);
   assert.match(prompt, /Translate or summarize relevant source\/tool results into the selected response language/);
   assert.match(prompt, /Do not switch to Japanese unless Japanese was explicitly requested/);
+  assert.match(prompt, /Please answer in Japanese/);
   assert.match(prompt, /Please answer in English/);
+  assert.ok(prompt.lastIndexOf("Please answer in English") > prompt.lastIndexOf("Please answer in Japanese"));
   assert.match(prompt, /ジャカルタは曇り/);
 });
