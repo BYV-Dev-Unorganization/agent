@@ -167,6 +167,144 @@ export function buildToolInstruction(tools, choice) {
   return lines.join("\n");
 }
 
+function renderToolPromptMessage(message) {
+  const role = message.role === "tool" ? "TOOL RESULT" : String(message.role || "unknown").toUpperCase();
+  return "[" + role + "]\n" + String(message.content ?? "");
+}
+
+function summarizeToolParameters(schema = {}) {
+  const properties = schema.properties && typeof schema.properties === "object"
+    ? Object.entries(schema.properties)
+    : [];
+  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+  return properties.map(([name, definition]) => {
+    const type = Array.isArray(definition?.type)
+      ? definition.type.join("|")
+      : definition?.type || "any";
+    const description = typeof definition?.description === "string" && definition.description.trim()
+      ? " (" + definition.description.trim() + ")"
+      : "";
+    return name + (required.has(name) ? "*" : "") + ": " + type + description;
+  }).join("; ") || "no arguments";
+}
+
+/**
+ * Build the prompt in the same order used by deepseek-super:
+ * system -> conversation history -> tools -> latest user/tool-result turn.
+ * The returned text is sent directly to Agent I without the generic
+ * source-text wrapper used by ordinary long-document requests.
+ */
+export function buildToolCallingPrompt({
+  systemPrompt = "",
+  userInstruction = "",
+  messages = [],
+  tools = [],
+  toolChoice = { mode: "auto" },
+  recoveryReason = "",
+  forceTextOnly = false
+} = {}) {
+  const parts = [];
+  if (typeof systemPrompt === "string" && systemPrompt.trim()) {
+    parts.push("### SYSTEM\n" + systemPrompt.trim());
+  }
+  if (typeof userInstruction === "string" && userInstruction.trim()) {
+    parts.push("### ADDITIONAL INSTRUCTIONS\n" + userInstruction.trim());
+  }
+
+  const latest = messages[messages.length - 1] || { role: "user", content: "" };
+  const history = messages.slice(0, -1);
+  if (history.length) {
+    parts.push("### CONVERSATION HISTORY\n" +
+      history.map(renderToolPromptMessage).join("\n\n"));
+  }
+
+  if (tools.length) {
+    const lines = [
+      "You have access to the tools listed below. These are the only tools available for this request.",
+      "",
+      ...tools.flatMap((tool) => [
+        "- " + tool.name + "(" + summarizeToolParameters(tool.input_schema) + "): " +
+          (tool.description || "No description supplied."),
+        "  input_schema: " + JSON.stringify(tool.input_schema)
+      ]),
+      "",
+      "MANDATORY RULES:",
+      "1. If the task requires information or an action that one of the listed tools can provide, you MUST use the appropriate tool. Do not guess, fabricate results, or substitute a manual answer.",
+      "2. If tool results already received are sufficient to complete the task, provide the final answer without another tool call. Otherwise, continue with the next appropriate tool.",
+      "3. Use the exact gateway DSML markup below. Do not use JSON tool-call wrappers, Markdown fences, or legacy <TOOL_CALL> tags.",
+      "4. Emit exactly ONE outer calls block for the whole assistant tool response, with one invoke block per requested tool. Do not repeat the calls wrapper.",
+      "5. For string arguments, set string=\"true\" and write the raw string value without JSON quoting or escaping.",
+      "6. For numbers, booleans, null, arrays, and objects, set string=\"false\" and write the value as valid JSON.",
+      "7. Use each parameter name exactly as declared in the selected tool schema. Do not duplicate parameter names or invent tools or arguments.",
+      "8. Do NOT write anything outside the DSML calls block when calling tools.",
+      "9. Use plain text only when no tool is needed or when the task is complete.",
+      "",
+      "REQUIRED DSML FORMAT (format example only; replace all placeholders):",
+      "<｜DSML｜ calls>",
+      "<｜DSML｜ invoke name=\"TOOL_NAME\">",
+      "<｜DSML｜ parameter name=\"STRING_ARGUMENT\" string=\"true\">RAW_STRING_VALUE</｜DSML｜ parameter>",
+      "<｜DSML｜ parameter name=\"NON_STRING_ARGUMENT\" string=\"false\">VALID_JSON_VALUE</｜DSML｜ parameter>",
+      "</｜DSML｜ invoke>",
+      "</｜DSML｜ calls>"
+    ];
+
+    const choiceMode = forceTextOnly ? "none" : (toolChoice?.mode || "auto");
+    if (choiceMode === "none") {
+      lines.push("", "=== STOP: DO NOT CALL TOOLS ===",
+        "All tool calls are disabled for this turn. Do not emit DSML or any tool-call markup. Answer in plain text using only the available conversation and tool results.");
+    } else if (choiceMode === "required" || choiceMode === "any") {
+      lines.push("", "TOOL CHOICE: at least one tool call is REQUIRED for this turn. Do not answer in plain text instead of calling a tool.");
+    } else if (choiceMode === "tool") {
+      lines.push("", "TOOL CHOICE: call the tool named \"" + toolChoice.name + "\" now. Do not call a different tool.");
+    } else {
+      lines.push("", "TOOL CHOICE: auto. Call a tool whenever it is needed to complete the user's request; otherwise answer normally.");
+    }
+
+    parts.push("### TOOLS\n" + lines.join("\n"));
+  }
+
+  const latestText = renderToolPromptMessage(latest);
+  const latestIsToolResult = latest.role === "user" && /\\[tool_result id=/.test(String(latest.content ?? ""));
+  if (latestIsToolResult) {
+    parts.push("=== LATEST TOOL RESULTS ===\n" + latestText);
+    const originalRequest = messages.find((message) =>
+      message.role === "user" && !/\\[tool_result id=/.test(String(message.content ?? ""))
+    );
+    if (originalRequest) {
+      parts.push("=== ORIGINAL USER REQUEST ===\n" + renderToolPromptMessage(originalRequest));
+    }
+    parts.push([
+      "=== INSTRUCTIONS AFTER TOOL RESULTS ===",
+      "Base claims on tool results that were actually received. Do not claim success unless a tool result confirms it.",
+      "If the task is complete, provide the final answer without tool-call tags.",
+      "If the received results are insufficient, call the next necessary tool using exactly one DSML calls block.",
+      "If a tool failed, report the actual error returned by that tool."
+    ].join("\n"));
+  } else {
+    parts.push("### LATEST USER MESSAGE\n" + latestText);
+    parts.push("Respond as the assistant. If a tool is needed, output only one gateway DSML calls block using the invoke and parameter tags defined above. Do not include prose or Markdown outside that block.");
+  }
+
+  if (forceTextOnly) {
+    parts.push([
+      "=== TEXT-ONLY RECOVERY ===",
+      "A repeated tool call was detected. Do not call any tool again in this turn.",
+      "Do not emit DSML markup. Give the best possible plain-text answer using only the conversation and tool results already available."
+    ].join("\n"));
+  } else if (recoveryReason) {
+    parts.push([
+      "=== TOOL CALL RECOVERY ===",
+      "Your previous response did not contain a valid DSML tool call or did not satisfy the declared schema.",
+      "Correct the issue below and rebuild the necessary tool call from scratch.",
+      "Output exactly one valid DSML calls block when a tool is required. Do not answer in plain text instead.",
+      "Use only the declared tool names and schema-valid arguments.",
+      "Validation issue: " + recoveryReason
+    ].join("\n"));
+  }
+
+  return parts.join("\n\n");
+}
+
 function readAttribute(attributes, name) {
   const matcher = /([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*("([^"]*)"|'([^']*)')/g;
   let match;
