@@ -47,7 +47,7 @@ test("OpenAI Chat Completions returns an OpenAI-shaped response", async () => {
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: "agent-i",
+      model: "gpt-agent-v1",
       messages: [
         { role: "system", content: "Answer clearly." },
         { role: "user", content: "Say hello." }
@@ -59,7 +59,7 @@ test("OpenAI Chat Completions returns an OpenAI-shaped response", async () => {
   assert.match(response.headers.get("content-type"), /application\/json/);
   const data = await response.json();
   assert.equal(data.object, "chat.completion");
-  assert.equal(data.model, "agent-i");
+  assert.equal(data.model, "gpt-agent-v1");
   assert.equal(data.choices[0].message.role, "assistant");
   assert.equal(data.choices[0].message.content, "Mock Agent I response");
   assert.equal(data.choices[0].finish_reason, "stop");
@@ -76,7 +76,7 @@ test("Anthropic Messages accepts x-api-key and returns a message object", async 
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: "agent-i",
+      model: "claude-agent-v1",
       max_tokens: 512,
       system: "Be concise.",
       messages: [{ role: "user", content: "Say hello." }]
@@ -87,7 +87,7 @@ test("Anthropic Messages accepts x-api-key and returns a message object", async 
   const data = await response.json();
   assert.equal(data.type, "message");
   assert.equal(data.role, "assistant");
-  assert.equal(data.model, "agent-i");
+  assert.equal(data.model, "claude-agent-v1");
   assert.deepEqual(data.content, [{ type: "text", text: "Mock Agent I response" }]);
   assert.equal(data.stop_reason, "end_turn");
   assert.ok(data.usage.input_tokens > 0);
@@ -101,7 +101,7 @@ test("OpenAI streaming emits Chat Completion chunk frames and [DONE]", async () 
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: "agent-i",
+      model: "gpt-agent-v1",
       stream: true,
       messages: [{ role: "user", content: "Say hello." }]
     })
@@ -123,7 +123,7 @@ test("Anthropic streaming emits the Messages event sequence", async () => {
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: "agent-i",
+      model: "claude-agent-v1",
       max_tokens: 512,
       stream: true,
       messages: [{ role: "user", content: "Say hello." }]
@@ -146,7 +146,7 @@ test("OpenAI tools return validated tool_calls without executing them on the bac
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: "agent-i",
+      model: "gpt-agent-v1",
       messages: [{ role: "user", content: "Look up record 42." }],
       tools: [{
         type: "function",
@@ -188,7 +188,7 @@ test("OpenAI tool prompts over the legacy 7 KB budget still use direct mode", as
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: "agent-i",
+      model: "gpt-agent-v1",
       messages: [{ role: "user", content: "Look up record 42." }],
       tools: [{
         type: "function",
@@ -237,7 +237,7 @@ test("OpenAI accepts tool-result messages and continues the conversation", async
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: "agent-i",
+      model: "gpt-agent-v1",
       messages: [{ role: "user", content: "Look up record 42." }],
       tools: [tool]
     })
@@ -253,7 +253,7 @@ test("OpenAI accepts tool-result messages and continues the conversation", async
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: "agent-i",
+      model: "gpt-agent-v1",
       messages: [
         { role: "user", content: "Look up record 42." },
         {
@@ -292,7 +292,7 @@ test("tool_choice=none does not return tool calls", async () => {
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: "agent-i",
+      model: "gpt-agent-v1",
       messages: [{ role: "user", content: "Look up record 42." }],
       tools: [{
         type: "function",
@@ -325,7 +325,7 @@ test("Anthropic tools return tool_use blocks and accept tool_result messages", a
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: "agent-i",
+      model: "claude-agent-v1",
       max_tokens: 512,
       messages: [{ role: "user", content: "Look up record 42." }],
       tools: [{
@@ -356,7 +356,7 @@ test("Anthropic tools return tool_use blocks and accept tool_result messages", a
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: "agent-i",
+      model: "claude-agent-v1",
       max_tokens: 512,
       messages: [
         { role: "user", content: "Look up record 42." },
@@ -392,7 +392,7 @@ test("OpenAI streaming emits tool_calls and the tool_calls finish reason", async
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: "agent-i",
+      model: "gpt-agent-v1",
       stream: true,
       messages: [{ role: "user", content: "Look up record 42." }],
       tools: [{
@@ -426,7 +426,7 @@ test("Anthropic streaming emits tool_use content blocks", async () => {
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: "agent-i",
+      model: "claude-agent-v1",
       max_tokens: 512,
       stream: true,
       messages: [{ role: "user", content: "Look up record 42." }],
@@ -450,12 +450,28 @@ test("Anthropic streaming emits tool_use content blocks", async () => {
   assert.match(stream, /event: message_stop/);
 });
 
-test("OpenAI model list includes the Agent I model alias", async () => {
+test("OpenAI model list advertises gpt-agent-v1", async () => {
   const response = await fetch(baseUrl + "/v1/models", {
     headers: { authorization: "Bearer compat-test-token" }
   });
   assert.equal(response.status, 200);
   const data = await response.json();
   assert.equal(data.object, "list");
-  assert.equal(data.data[0].id, "agent-i");
+  assert.equal(data.data[0].id, "gpt-agent-v1");
+});
+
+test("Anthropic model list advertises claude-agent-v1 in Anthropic format", async () => {
+  const response = await fetch(baseUrl + "/v1/models", {
+    headers: {
+      "x-api-key": "compat-test-token",
+      "anthropic-version": "2023-06-01"
+    }
+  });
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.data[0].type, "model");
+  assert.equal(data.data[0].id, "claude-agent-v1");
+  assert.equal(data.data[0].display_name, "Claude Agent v1");
+  assert.equal(data.data[0].lifecycle, "active");
+  assert.equal(data.has_more, false);
 });
