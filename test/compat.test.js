@@ -62,6 +62,9 @@ test("OpenAI Chat Completions returns an OpenAI-shaped response", async () => {
   assert.equal(data.model, "gpt-agent-v1");
   assert.equal(data.choices[0].message.role, "assistant");
   assert.equal(data.choices[0].message.content, "Mock Agent I response");
+  assert.match(lastGatewayPrompt, /RESPONSE LANGUAGE POLICY/);
+  assert.match(lastGatewayPrompt, /same natural language as the user's latest actual request/);
+  assert.match(lastGatewayPrompt, /Do not switch to Japanese unless Japanese was explicitly requested/);
   assert.equal(data.choices[0].finish_reason, "stop");
   assert.ok(data.usage.total_tokens >= data.usage.prompt_tokens);
   assert.ok(response.headers.get("x-agent-i-job-id"));
