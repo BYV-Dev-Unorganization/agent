@@ -15,7 +15,7 @@ before(async () => {
     gateway: {
       async chat(prompt) {
         if (prompt.includes("TOOL LOOP RECOVERY:")) return "I will answer without calling a tool.";
-        if (prompt.includes("[tool_result id=call_fixture]")) return "OpenAI record 42 details confirmed.";
+        if (prompt.includes("[tool_result id=call_")) return "OpenAI record 42 details confirmed.";
         if (prompt.includes("Record 42 was found.")) return "Record 42 details confirmed.";
         if (prompt.includes("fixture_lookup")) {
           return "<｜DSML｜ calls><｜DSML｜ invoke name=\"fixture_lookup\"><｜DSML｜ parameter name=\"id\" string=\"false\">42</｜DSML｜ parameter></｜DSML｜ invoke></｜DSML｜ calls>";
