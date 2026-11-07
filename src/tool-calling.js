@@ -219,7 +219,7 @@ export function buildToolCallingPrompt({
       history.map(renderToolPromptMessage).join("\n\n"));
   }
 
-  if (tools.length) {
+  if (tools.length && choiceMode !== "none") {
     const lines = [
       "You have access to the tools listed below. These are the only tools available for this request.",
       "You do not execute tools yourself. Emit tool requests in DSML; the API client executes them and sends their results back in a later message.",
@@ -255,6 +255,8 @@ export function buildToolCallingPrompt({
     ];
 
     parts.push("### TOOLS\n" + lines.join("\n"));
+  } else if (tools.length && choiceMode === "none") {
+    parts.push("### TOOL CALL POLICY\nTool calling is disabled for this turn. Do not call any tool and do not emit DSML or tool-call markup. Answer in plain text using only the available conversation.");
   }
 
   const latestText = renderToolPromptMessage(latest);
