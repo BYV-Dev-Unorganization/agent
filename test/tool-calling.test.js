@@ -98,6 +98,27 @@ test("validates required fields, types, and additionalProperties", () => {
   assert.match(extra.error, /not allowed/i);
 });
 
+test("rejects unsafe client-supplied regular expression patterns", () => {
+  const unsafeTools = normalizeOpenAITools([{
+    type: "function",
+    function: {
+      name: "validate_code",
+      parameters: {
+        type: "object",
+        properties: { code: { type: "string", pattern: "^(a+)+$" } },
+        required: ["code"]
+      }
+    }
+  }]);
+  const result = validateToolCalls(
+    [{ name: "validate_code", input: { code: "aaaaaaaa!" } }],
+    unsafeTools,
+    { mode: "auto" }
+  );
+  assert.equal(result.valid, false);
+  assert.match(result.error, /unsafe nested or quantified-group pattern/i);
+});
+
 test("enforces required and named tool choices", () => {
   const required = normalizeOpenAIToolChoice("required", tools);
   assert.equal(validateToolCalls([], tools, required).valid, false);
