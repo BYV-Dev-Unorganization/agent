@@ -176,7 +176,7 @@ test("builds a tool-result continuation prompt with original task context", () =
   const prompt = buildToolCallingPrompt({
     messages: [
       { role: "user", content: "Look up record 42." },
-      { role: "assistant", content: "[assistant tool_use id=toolu_123 name=lookup_record]\\n{\\"id\\":42}" },
+      { role: "assistant", content: '[assistant tool_use id=toolu_123 name=lookup_record]\n{"id":42}' },
       { role: "user", content: "[tool_result id=toolu_123]\\nRecord 42 was found." }
     ],
     tools,
